@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-17
 
-**Status: NO TEST IS IMPLEMENTED YET.** This is a plan, not a record of passing tests. Record a result and the test function name only after the test has actually been run.
+**Status:** only T01–T05 (M1) are implemented. Everything else is a plan, not a record of passing tests. Record a result and the test function name only after the test has actually been run.
 
 Tests that depend on a `PROPOSED` or `PENDING` decision must not be written before that decision is approved. Formulas, invariants (BI-x) and function rules are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -12,11 +12,13 @@ Tests that depend on a `PROPOSED` or `PENDING` decision must not be written befo
 
 | ID | Description | Status |
 |---|---|---|
-| T01 | `MockERC20.decimals()` returns 18 and 6 for the respective mocks | `NOT IMPLEMENTED` |
-| T02 | `mint` updates `balanceOf` and `totalSupply` | `NOT IMPLEMENTED` |
-| T03 | `transfer` succeeds; reverts on insufficient balance | `NOT IMPLEMENTED` |
-| T04 | `approve` + `transferFrom` succeed and reduce allowance | `NOT IMPLEMENTED` |
-| T05 | `transferFrom` reverts on insufficient allowance | `NOT IMPLEMENTED` |
+| T01 | `MockERC20.decimals()` returns 18 and 6 for the respective mocks | `PASSED` — `test_T01_decimals` |
+| T02 | `mint` updates `balanceOf` and `totalSupply` | `PASSED` — `test_T02_mintUpdatesBalanceAndSupply`, `testFuzz_T02_mint` (256 runs) |
+| T03 | `transfer` succeeds; reverts on insufficient balance | `PASSED` — `test_T03_transfer`, `test_T03_transferRevertsOnInsufficientBalance` |
+| T04 | `approve` + `transferFrom` succeed and reduce allowance | `PASSED` — `test_T04_approveAndTransferFrom` |
+| T05 | `transferFrom` reverts on insufficient allowance | `PASSED` — `test_T05_transferFromRevertsOnInsufficientAllowance` |
+
+File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 with the U12 configuration (§14).
 
 ## 2. Constructor (M2)
 
@@ -192,6 +194,19 @@ C01–C07 (deferred protocol fee): `FUTURE-ONLY`; not written; excluded from pas
 ## 14. Gas
 
 Record only measured values, with identical compiler, optimizer, EVM version, initial state and workload for any comparison.
+
+**Every gas result must state the compiler configuration it was measured with** (`APPROVED` workflow rule). Verify it with `forge config` immediately before measuring. Current configuration (U12):
+
+| Setting | Value |
+|---|---|
+| `solc` | 0.8.38 (`auto_detect_solc = false`) |
+| Optimizer | enabled, `optimizer_runs = 200` |
+| `evm_version` | `osaka` |
+| `via_ir` | `false` |
+| OpenZeppelin Contracts | v5.7.0 (`cab19933`) |
+| forge / forge-std | 1.9.0 / 1.17.0 |
+
+If any setting changes, earlier measurements are not comparable with later ones; re-measure both sides under one configuration.
 
 | ID | Measurement | Purpose | Milestone | Status |
 |---|---|---|---|---|

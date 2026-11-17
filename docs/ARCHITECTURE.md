@@ -257,7 +257,7 @@ Solidity 0.8 checked arithmetic reverts on overflow instead of wrapping, so an o
 
 `uint112` reserves (Uniswap V2 style, enabling storage packing) are not used now. They remain a candidate gas optimisation, to be proposed only with before/after measurements (DECISIONS ADR-012).
 
-`Math.mulDiv` rounding enum names (`Math.Rounding.Ceil`) must be confirmed against the installed OpenZeppelin version in M1.
+`Math.Rounding.Ceil` confirmed in the installed OpenZeppelin v5.7.0 (`enum Rounding { Floor, Ceil, Trunc, Expand }`, M1).
 
 ### 6.7 Numerical reference cases (script-checked 2026-11-17)
 

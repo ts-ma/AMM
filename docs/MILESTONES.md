@@ -10,10 +10,10 @@ Workflow rules: root `CLAUDE.md`. Status labels: [DECISIONS.md](DECISIONS.md) §
 | Item | Status |
 |---|---|
 | Architecture documents (`docs/`, five files) | Revised after the 2026-11-17 consistency review; awaiting student review |
-| Git | `main`, zero commits; baseline contents approved, waiting for "开始" |
+| Git | Baseline `97f64d8` on `main`; M1 work on `m1-setup` |
 | AMM contracts | None |
-| Tests | Only the Foundry Counter template |
-| Dependencies | forge 1.9.0, forge-std 1.17.0 (plain directory, not a submodule); OpenZeppelin not installed |
+| Tests | Counter template; MockERC20 T01–T05 passing |
+| Dependencies | forge 1.9.0, forge-std 1.17.0, OpenZeppelin Contracts v5.7.0 (all plain directories, not submodules); compiler pinned per U12 |
 | Gas measurements | None |
 
 No milestone has been accepted. Only the student accepts milestones.
@@ -34,7 +34,7 @@ Dates are targets, not commitments.
 | M | Scope | Needs approval first | Acceptance | Tests | Target |
 |---|---|---|---|---|---|
 | M0 | Repository and brief review; decisions; five documents | — | Student approves documents | — | 11/17 |
-| M1 | `chore`: pin `solc` / optimizer / `evm_version`, install OpenZeppelin v5.x + remapping. `test`: `MockERC20` (18/6 decimals) and its tests. Counter kept. No AMM logic | U12 values (reported during M1) | Actual `forge build` / `forge test` output; no protocol code | T01–T05 | 11/17–18 |
+| M1 | `chore`: pin `solc` / optimizer / `evm_version`, install OpenZeppelin v5.x + remapping. `test`: `MockERC20` (18/6 decimals) and its tests. Counter kept. No AMM logic | U12 values (approved 2026-11-17) | Actual `forge build` / `forge test` / `forge config` output; no protocol code | T01–T05 | 11/17–18 |
 | M2 | Pool skeleton: constructor and four recipient checks, immutables, reserves, `getReserves`; pure maths (swap quote, sqrt) | Signatures, error names | Maths equals reference cases; constructor checks | K01–K04, R01, S02/S14 (pure), Z06 (pure) | 11/18 |
 | M3 | LP ERC-20; initial deposit; lock in `address(this)` | LP `name`/`symbol`; LP-SELF override mechanism | Supply accounting; BI-7; lock review rules hold | L01, L02, L07, P01–P06 | 11/18 |
 | M4 | Later optimal deposit (Tier 0, full U10 signature) and proportional withdrawal with MIN-NET and A8 | Signatures, events | Ratios, fairness, minima, atomicity, dust, BI-2/5/6 | L03, L04, L06, L08, L11, L12, L14, W01–W04, W06, W08, B02, B06, B07 | 11/19 |

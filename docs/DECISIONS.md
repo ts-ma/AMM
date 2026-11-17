@@ -89,7 +89,7 @@ In v0.3, `sync()` could set reserves to actual balances, absorbing surplus. Unde
 | U9 | Adaptive algorithm (Gate L) | L-α with the seven conditions, the step sequence and the `[T, T+1]` tolerance in ARCHITECTURE §6.2. Initial deposit ignores tax hints (option i). The gross-selection rule in step 3 (ceiling vs. minimal necessary gross) is re-opened for a dedicated comparison at the start of M8. | `APPROVED` (A7); step-3 gross rule `PENDING` (M8) |
 | U10 | Tax-hint parameters | Two extra parameters in the single `addLiquidity`; standard tokens pass 0. | `APPROVED` |
 | U11 | Factory design | Keep `allPairs`; deploy with ordinary `new` (CREATE). | `APPROVED` |
-| U12 | Compiler configuration | Process: in M1, determine the actual `solc`, then pin it with explicit optimizer and `evm_version`. Exact values reported to the student for approval. | Process `APPROVED`; values `PENDING` |
+| U12 | Compiler configuration | `solc` 0.8.38 (`auto_detect_solc = false`); optimizer on, 200 runs; `evm_version = osaka`; `via_ir = false`; OpenZeppelin Contracts v5.7.0 (commit `cab19933`) vendored as plain files; explicit remappings with auto-detection off. Effective values verified with `forge config`. | `APPROVED` (2026-11-17) |
 | U13 | Additional extensions | None now; D14 stays `PENDING`. | `PENDING` (D14) |
 
 ### Why U10 affects the function signature
@@ -124,6 +124,9 @@ A Pool cannot query a token's transfer-tax rate on-chain, so the caller must sup
 | Decision explanations | Before each milestone, explain the relevant decisions in simple Chinese. | `APPROVED` |
 | M1 configuration changes | Install OpenZeppelin Contracts v5.x with remapping; pin `solc`/optimizer/`evm_version`; `.gitignore`. | `APPROVED`; values per U12 |
 | Counter template | Keep for now. | `APPROVED` |
+| Commit authorship | Commits list only the student as author; no `Co-Authored-By` lines. Applies from M1 onward (baseline `97f64d8` predates the rule and is not rewritten). | `APPROVED` |
+| Configuration verification | Besides `forge build` and `forge test`, run `forge config` to verify the effective configuration after any config change and at each milestone. | `APPROVED` |
+| Gas reporting | Every gas measurement in the report and docs is recorded together with the compiler configuration it used (TEST_MATRIX §14). | `APPROVED` |
 
 ## 7. ADR log
 
@@ -158,7 +161,6 @@ In dependency order.
 
 | Item | Needed by | Status |
 |---|---|---|
-| U12 exact `solc`, optimizer runs, `evm_version`, OpenZeppelin tag | During M1 | `PENDING` |
 | Function signatures, event names/fields, custom-error names | Start of each milestone | `PROPOSED` |
 | LP token `name` / `symbol` | M3 | `PENDING` |
 | L-α gross selection: compare the current ceiling-gross formula with the minimal-necessary-gross alternative; decide whether a one-unit over-delivery is allowed and how the user cap applies (ARCHITECTURE §6.2) | Start of M8 | `PENDING` |
