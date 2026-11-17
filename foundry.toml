@@ -3,4 +3,24 @@ src = "src"
 out = "out"
 libs = ["lib"]
 
+# Compiler configuration — U12, approved 2026-11-17 (docs/DECISIONS.md).
+# Pinned so bytecode, test results and gas measurements are reproducible.
+# Every gas figure in the report must quote these values; verify the
+# effective settings with `forge config`.
+solc_version = "0.8.38"
+auto_detect_solc = false
+optimizer = true
+optimizer_runs = 200
+evm_version = "osaka"
+via_ir = false
+
+# Explicit remappings (do not rely on auto-detection of nested lib/ files).
+# OpenZeppelin Contracts v5.7.0, commit cab19933c33c2ad1d4c7a84864a3601dddfd16f3,
+# vendored as plain files in lib/openzeppelin-contracts.
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
+auto_detect_remappings = false
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
