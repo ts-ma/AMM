@@ -161,10 +161,24 @@ In dependency order.
 
 | Item | Needed by | Status |
 |---|---|---|
-| Function signatures, event names/fields, custom-error names | Start of each milestone | `PROPOSED` |
+| Function signatures, event names/fields, custom-error names | Start of each milestone (M2 items approved, §9) | `PROPOSED` for M3 onward |
 | LP token `name` / `symbol` | M3 | `PENDING` |
 | L-α gross selection: compare the current ceiling-gross formula with the minimal-necessary-gross alternative; decide whether a one-unit over-delivery is allowed and how the user cap applies (ARCHITECTURE §6.2) | Start of M8 | `PENDING` |
 | A9 final choice: on-chain swap assertion or tests only | During M5 | `PENDING` |
 | Factory: one shared `surplusRecipient` for all Pools; token code-existence check; whether Pool stores `factory` | M7 | `PENDING` |
 | D14 | — | `PENDING` |
 | Protocol fee, `feeTo`, owner/pause, separate surplus accounting, `uint112` packing | — | `FUTURE-ONLY` |
+
+## 9. M2 decisions (approved 2026-11-17)
+
+| ID | Topic | Decision | Status |
+|---|---|---|---|
+| M2-1 | Names | Pool: `AMMPool` in `src/AMMPool.sol`. Maths: separate library `AMMMath` in `src/libraries/AMMMath.sol` with `internal pure` functions (inlined; no linking). | `APPROVED` |
+| M2-2 | Token ordering | Caller supplies pre-sorted tokens; the Pool checks and never sorts. Future Factory sorts before deploying (not implemented now). Pool does not read or store `msg.sender`/`factory`; no code-existence check (both stay `PENDING` for M7). | `APPROVED` |
+| M2-3 | Token checks and errors | In order: `token0_ == 0 \|\| token1_ == 0` → `ZeroAddress()` (whichever is zero, including both, and regardless of order); `token0_ == token1_` → `IdenticalTokens()`; `token0_ > token1_` → `TokensNotSorted()`. | `APPROVED` |
+| M2-4 | Reserves in M2 | `reserve0`, `reserve1` are `private uint256`, start at 0, and **no M2 function writes them**. Only `getReserves()` reads them. Later writers are exactly those in ARCHITECTURE §5.2. | `APPROVED` |
+| M2-5 | Fee and maths conventions | `FEE_BPS = 30`, `BPS_DENOMINATOR = 10_000` are `constant`s in `AMMMath`; `AMMPool` re-exposes them as public constants. Swap output and sqrt round down. `AMMMath.getAmountOut` reverts: `amountIn == 0` → `InsufficientInputAmount()`; either reserve 0 → `InsufficientLiquidity()`; floored output 0 → `InsufficientOutputAmount()`. Overflow in checked arithmetic reverts with Panic `0x11`, never a wrong value. `AMMMath.initialShares(net0, net1) = floor(sqrt(net0 × net1))` (before the M3 lock); zero inputs return 0 (validation belongs to M3). | `APPROVED` |
+| M2-6 | Interface (option 4A) | `constructor(address token0_, address token1_, address surplusRecipient_)`; `token0`, `token1`, `surplusRecipient` are `public immutable`; `getReserves() external view returns (uint256, uint256)`. One error `InvalidSurplusRecipient()` for all four A3 checks. | `APPROVED` |
+| M2-7 | Commits | `feat`: AMMMath + tests; `feat`: AMMPool skeleton + tests; `docs`: sync. | `APPROVED` |
+| M2-8 | Scope guard | M2 contains only the Pool skeleton and pure maths. Not in M2: Factory, swap, quote on the Pool, LP ERC-20, mint/burn, lock address, `MINIMUM_LIQUIDITY`, LP `name`/`symbol`, `ReentrancyGuard`, any reserve write. | `APPROVED` |
+| M2-9 | Maths test design | See TEST_MATRIX §11.1: inputs are classified by an independent, overflow-free classifier (not by "all three inputs > 0"); fuzz tests are split into success, zero-output revert and overflow revert; every product in test assertions is computed exactly in 512 bits so test helpers cannot overflow. | `APPROVED` |

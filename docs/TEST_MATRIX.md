@@ -24,9 +24,9 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 
 | ID | Description | Status |
 |---|---|---|
-| K01 | Zero, identical and unsorted token addresses revert | `NOT IMPLEMENTED` |
+| K01 | Either token zero (token0, token1 or both, any order) → `ZeroAddress`; identical → `IdenticalTokens`; unsorted → `TokensNotSorted`; fuzz: outcome matches an independent classifier | `NOT IMPLEMENTED` |
 | K02 | `surplusRecipient == address(0)` reverts | `NOT IMPLEMENTED` |
-| K03 | Immutables set correctly; reserves and `totalSupply` are 0 | `NOT IMPLEMENTED` |
+| K03 | Immutables set correctly; reserves are 0; fee constants 30 / 10,000. (`totalSupply == 0` is checked in M3, when the LP ERC-20 exists.) | `NOT IMPLEMENTED` |
 | K04 | `surplusRecipient` equal to `token0`, `token1`, or the Pool's own (predicted) address each revert | `NOT IMPLEMENTED` |
 
 ## 3. Liquidity provision (M3, M4, M8)
@@ -168,6 +168,34 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 | Z06 | Boundary tests for each formula in ARCHITECTURE §6.6: just inside the sufficient condition succeeds; beyond the overflow threshold reverts; no wrong value returned | M5, M10 | `NOT IMPLEMENTED` |
 
 Do not use `assume()` to exclude conditions the implementation is expected to handle.
+
+### 11.1 Maths test design for `AMMMath` (M2, DECISIONS M2-9)
+
+**Independent classifier.** A test helper classifies `(a, rIn, rOut)` without calling `mulDiv` and without overflowing, in the same order as the implementation's checks:
+
+1. `a == 0` → `InsufficientInputAmount`.
+2. `rIn == 0` or `rOut == 0` → `InsufficientLiquidity`.
+3. Overflow → Panic `0x11` if `a > ⌊MAX/9970⌋`, or `rIn > ⌊MAX/10000⌋`, or `rIn·10000 > MAX − a·9970` (each step evaluated only after the previous one is known not to overflow).
+4. Zero output → `InsufficientOutputAmount` iff `aFee × rOut < den`, compared as exact 512-bit values.
+5. Otherwise success.
+
+So validity is never judged only by "all three inputs > 0".
+
+**512-bit helper.** `Wide512.mul(x, y)` returns the exact product as `(hi, lo)` using 128-bit limbs (schoolbook multiplication, independent of OpenZeppelin); it is cross-checked against `Math.mul512` by fuzzing. `Wide512.lt/lte` compare such values. Any product of two `uint256` values is `< 2^512`, so the helper cannot overflow.
+
+**Three fuzz classes, each with constructed (not `assume`-filtered) inputs:**
+
+| Class | Input construction | Assertions |
+|---|---|---|
+| A — success | `rIn ∈ [1, 2^112]`, `rOut ∈ [2, 2^112]`, `a ≥ aMin = ⌈rIn·10000 / (9970·(rOut−1))⌉` (the exact condition for `out ≥ 1`) | classifier says success; `out < rOut`; floor: `out·den ≤ aFee·rOut < (out+1)·den`; §6.5: `den·(rOut−out) ≥ (rIn·D)·rOut`; tightness: `den·(rOut−out−1) < (rIn·D)·rOut` (i.e. `out + 1` violates §6.5) |
+| B — zero output | `rOut = 1` with any `a`, or `rIn > 0.997·(rOut−1)` and `a ∈ [1, aMin − 1]` | classifier says zero output; call reverts with `InsufficientOutputAmount()`; no quote is required |
+| C — overflow | one of: `a > ⌊MAX/9970⌋`; `rIn > ⌊MAX/10000⌋`; or both in range but `rIn·10000 + a·9970 > MAX` | classifier says overflow; call reverts with Panic `0x11` |
+
+A fourth fuzz test feeds raw `uint256` triples to the classifier and checks the implementation behaves exactly as classified (any class, including zero input and zero reserves).
+
+**How `out + 1` avoids helper overflow.** All four products above are products of two values `< 2^256`: `den` and `rIn·D` fit in `uint256` because class A already excludes overflow; `out + 1 ≤ rOut` and `rOut − out − 1 ≥ 0` because `out < rOut`. Each product is formed with `Wide512.mul` and compared in 512 bits, so nothing in the test can overflow or wrap.
+
+**`initialShares`.** Overflow iff `net0 ≠ 0` and `net1 > ⌊MAX/net0⌋`. Otherwise `s = ⌊√p⌋` satisfies `s² ≤ p < (s+1)²`, checked in 512 bits because `(s+1)²` can equal `2^256`.
 
 ## 12. Stateful invariants (M10)
 

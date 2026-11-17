@@ -28,7 +28,7 @@ User / test
 | Maths helpers | Quote, integer square root (`Math.sqrt`), `Math.mulDiv`. | `APPROVED` (D12) |
 | Test-only mocks | Standard ERC-20 (18 and 6 decimals); U8 taxed ERC-20; exclusive-FOT mock (negative tests); reentrancy probe; failing / false-returning / no-return token; a token whose Pool balance can be reduced (deficit tests). | `APPROVED` |
 
-Contract and file names are `PROPOSED`.
+Names `AMMPool` (`src/AMMPool.sol`) and `AMMMath` (`src/libraries/AMMMath.sol`) are `APPROVED` (DECISIONS M2-1); other names remain `PROPOSED`.
 
 Not introduced without separate approval: Router, Oracle, flash swaps, owner/governance, upgradeable proxy, deployment workflow.
 
@@ -251,7 +251,7 @@ Solidity 0.8 checked arithmetic reverts on overflow instead of wrapping, so an o
 | L-α target | `mulDiv(cap0, r1, r0)` / `mulDiv(cap1, r0, r1)` | Reverts if result exceeds `uint256` | `cap × r_other / r_this < 2^256` |
 | L-α gross | `mulDiv(T_i, D, D − t_i, Ceil)` | Reverts if result exceeds `uint256` | `T_i × D / (D − t_i) < 2^256` |
 | Reserve updates | `reserve += net`, `reserve −= amount` checked | Reverts on overflow/underflow | Under BI-1 with truthful `balanceOf`, `reserve_i ≤ balance_i`; not asserted beyond checked arithmetic |
-| §6.5 in tests | Three-factor products | Test code may overflow | Fuzz inputs bounded to `[1, 2^112]`; hand estimate gives LHS `< 2^240` |
+| §6.5 in tests | Products of two `uint256` values (`den × (rOut − out)`, `(rIn × D) × rOut`, `aFee × rOut`, `out × den`) | Computed exactly as 512-bit values by a test helper; compared as 512-bit numbers | No overflow possible in the test helper for any `uint256` inputs (DECISIONS M2-9) |
 
 **Test input ranges:** unit tests use the reference values in §6.7; fuzz tests use `[1, 2^112]` for reserves and amounts, plus mixed 6/18-decimal scales; boundary tests (Z06) go just below and just above each threshold and expect success and a revert respectively, never a wrong value.
 
@@ -285,7 +285,7 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 
 ### 7.1 `constructor(address token0_, address token1_, address surplusRecipient_)`
 
-- **Checks:** `token0_ != 0`; `token0_ < token1_` (implies distinct and `token1_ != 0`); `surplusRecipient_ ∉ {address(0), token0_, token1_, address(this)}` (A3).
+- **Checks (in order, DECISIONS M2-3):** either token zero → `ZeroAddress()`; equal → `IdenticalTokens()`; `token0_ > token1_` → `TokensNotSorted()`; `surplusRecipient_ ∈ {address(0), token0_, token1_, address(this)}` → `InvalidSurplusRecipient()` (A3). The zero check comes first so a zero `token1_` is reported as `ZeroAddress`, not as unsorted.
 - **Effects:** set three immutables; reserves 0; `totalSupply` 0.
 - **Not done:** no record of `msg.sender`; no privileged role.
 - **Limit:** the four recipient checks catch only those four values. A valid but wrong address, a lost key, or an address the token refuses to pay cannot be detected; an immutable mistake requires redeployment.
