@@ -10,9 +10,9 @@ Workflow rules: root `CLAUDE.md`. Status labels: [DECISIONS.md](DECISIONS.md) §
 | Item | Status |
 |---|---|
 | Architecture documents (`docs/`, five files) | Revised after the 2026-11-17 consistency review; awaiting student review |
-| Git | Baseline `97f64d8` on `main`; M1 work on `m1-setup` |
-| AMM contracts | None |
-| Tests | Counter template; MockERC20 T01–T05 passing |
+| Git | M1 accepted (tag `m1-setup-accepted`, merged to `main`); M2 on `m2-pool-skeleton`, awaiting review |
+| AMM contracts | M2: `AMMPool` skeleton (constructor checks, immutables, read-only zero reserves, `getReserves`) and `AMMMath` (quote, initial shares) on `m2-pool-skeleton` |
+| Tests | 50 passing: Counter 2, MockERC20 7, AMMMath 26, AMMPool 15 |
 | Dependencies | forge 1.9.0, forge-std 1.17.0, OpenZeppelin Contracts v5.7.0 (all plain directories, not submodules); compiler pinned per U12 |
 | Gas measurements | None |
 

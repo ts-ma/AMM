@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-17
 
-**Status:** only T01–T05 (M1) are implemented. Everything else is a plan, not a record of passing tests. Record a result and the test function name only after the test has actually been run.
+**Status:** T01–T05 (M1) and the M2 rows marked `PASSED` are implemented. Everything else is a plan, not a record of passing tests. "Maths level" means the library function was tested; the Pool function that uses it does not exist yet. Record a result and the test function name only after the test has actually been run.
 
 Tests that depend on a `PROPOSED` or `PENDING` decision must not be written before that decision is approved. Formulas, invariants (BI-x) and function rules are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -24,10 +24,10 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 
 | ID | Description | Status |
 |---|---|---|
-| K01 | Either token zero (token0, token1 or both, any order) → `ZeroAddress`; identical → `IdenticalTokens`; unsorted → `TokensNotSorted`; fuzz: outcome matches an independent classifier | `NOT IMPLEMENTED` |
-| K02 | `surplusRecipient == address(0)` reverts | `NOT IMPLEMENTED` |
-| K03 | Immutables set correctly; reserves are 0; fee constants 30 / 10,000. (`totalSupply == 0` is checked in M3, when the LP ERC-20 exists.) | `NOT IMPLEMENTED` |
-| K04 | `surplusRecipient` equal to `token0`, `token1`, or the Pool's own (predicted) address each revert | `NOT IMPLEMENTED` |
+| K01 | Either token zero (token0, token1 or both, any order) → `ZeroAddress`; identical → `IdenticalTokens`; unsorted → `TokensNotSorted`; fuzz: outcome matches an independent classifier | `PASSED` — `test_K01_*` (5 unit), `testFuzz_K01_K04_constructorMatchesClassifier`, `testFuzz_K01_zeroInEitherPosition` |
+| K02 | `surplusRecipient == address(0)` reverts | `PASSED` — `test_K02_zeroRecipientReverts` |
+| K03 | Immutables set correctly; reserves are 0; fee constants 30 / 10,000. (`totalSupply == 0` is checked in M3, when the LP ERC-20 exists.) | `PASSED` — `test_K03_initialState` (`totalSupply` part in M3) |
+| K04 | `surplusRecipient` equal to `token0`, `token1`, or the Pool's own (predicted) address each revert | `PASSED` — `test_K04_*` (3 reverts + address-prediction control), `testFuzz_K01_K04_constructorMatchesClassifier` |
 
 ## 3. Liquidity provision (M3, M4, M8)
 
@@ -70,8 +70,8 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 | ID | Description | Milestone | Status |
 |---|---|---|---|
 | S01 | Swaps work in both directions | M5 | `NOT IMPLEMENTED` |
-| S02 | Reference case 1: `1,000,000 / 1,000,000`, `a = 10,000` → `out = 9,871` | M5 | `NOT IMPLEMENTED` |
-| S03 | `amountIn = 0`, `out = 0` (reference case 3) and zero reserves revert | M5 | `NOT IMPLEMENTED` |
+| S02 | Reference case 1: `1,000,000 / 1,000,000`, `a = 10,000` → `out = 9,871` | M5 | `PASSED` at maths level (`AMMMath`, M2) — `test_S02_referenceCase1`; Pool swap: `NOT IMPLEMENTED` (M5) |
+| S03 | `amountIn = 0`, `out = 0` (reference case 3) and zero reserves revert | M5 | `PASSED` at maths level (`AMMMath`, M2) — zero input, zero reserves, reference case 3 (`test_S03_*`); Pool swap: `NOT IMPLEMENTED` (M5) |
 | S04 | MIN-NET: `minNetAmountOut = out` succeeds, `out + 1` reverts; expired deadline reverts | M5 | `NOT IMPLEMENTED` |
 | S05 | Taxed input: pricing and accounting use measured net | M8 | `NOT IMPLEMENTED` |
 | S06 | Taxed output: minimum judged on recipient's actual receipt (e.g. min 100, receives 99 → revert) | M8 | `NOT IMPLEMENTED` |
@@ -79,11 +79,11 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 | S08 | Reentrancy during swap is blocked | M5 | `NOT IMPLEMENTED` |
 | S09 | A failed swap leaves no state change | M5 | `NOT IMPLEMENTED` |
 | S10 | 0-bps reference (9,900) vs. 30-bps result (9,871); the difference remains in reserves | M5 | `NOT IMPLEMENTED` |
-| S11 | Fee-adjusted inequality holds after every successful swap (unit + fuzz in `[1, 2^112]`) | M5 | `NOT IMPLEMENTED` |
+| S11 | Fee-adjusted inequality holds after every successful swap (unit + fuzz in `[1, 2^112]`) | M5 | `PASSED` at maths level (`AMMMath`, M2) — fuzz class A and classifier fuzz (512-bit check); per-swap: `NOT IMPLEMENTED` (M5) |
 | S12 | `recipient ∈ {address(0), Pool}` reverts; `tokenIn` outside the pair reverts | M5 | `NOT IMPLEMENTED` |
 | S13 | After several swaps, redeeming all LP returns a larger `amount0 × amount1` than deposited (fees accrue to LPs) | M5 | `NOT IMPLEMENTED` |
-| S14 | Reference cases 2, 4 and 5 (499,248; 1,992,013; 498,251,621,566,649,025) | M5 | `NOT IMPLEMENTED` |
-| S15 | Implementation output equals the reference formula exactly (fuzz); `out + 1` violates the inequality for reference cases | M5 | `NOT IMPLEMENTED` |
+| S14 | Reference cases 2, 4 and 5 (499,248; 1,992,013; 498,251,621,566,649,025) | M5 | `PASSED` at maths level (`AMMMath`, M2) — `test_S14_referenceCase2/4/5`; Pool swap: `NOT IMPLEMENTED` (M5) |
+| S15 | Implementation output equals the reference formula exactly (fuzz); `out + 1` violates the inequality for reference cases | M5 | `PASSED` at maths level (`AMMMath`, M2) — exact floor and `out + 1` tightness for reference cases and fuzz; Pool swap: `NOT IMPLEMENTED` (M5) |
 
 ## 6. Reserves, `sync()`, `skim()` (M2, M6, M8)
 
@@ -91,7 +91,7 @@ v0.3's R05, R06 and R10 tested the `sync`/`skim` race. That race no longer exist
 
 | ID | Description | Milestone | Status |
 |---|---|---|---|
-| R01 | `getReserves()` returns recorded reserves; unchanged by a direct transfer | M2 | `NOT IMPLEMENTED` |
+| R01 | `getReserves()` returns recorded reserves; unchanged by a direct transfer | M2 | `PASSED` (M2, no reserve writer exists yet) — `test_R01_directTransferDoesNotChangeReserves`; re-run when writers exist |
 | R02 | Any address can call `sync()` | M6 | `NOT IMPLEMENTED` |
 | R03 | `skim()` sends all surplus to `surplusRecipient`; reserves and price unchanged | M6 | `NOT IMPLEMENTED` |
 | R04 | `skim()` takes no recipient parameter; caller's balance does not increase | M6 | `NOT IMPLEMENTED` |
@@ -160,16 +160,18 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 | X02 | Tokens that return `false`, return nothing, or revert cause full rollback | M5 | `NOT IMPLEMENTED` |
 | X03 | ABI has no owner, setter, sweep or pause function | M5 | `NOT IMPLEMENTED` |
 | X04 | Exclusive-FOT mock (over-debits the Pool) makes remove, swap and skim revert (A8) | M8 | `NOT IMPLEMENTED` |
-| Z01 | Fuzz swap in `[1, 2^112]`: `out < rOut`; inequality holds; no unexpected revert | M5 | `NOT IMPLEMENTED` |
+| Z01 | Fuzz swap in `[1, 2^112]`: `out < rOut`; inequality holds; no unexpected revert | M5 | `PASSED` at maths level (`AMMMath`, M2) — `testFuzz_getAmountOut_A_success`; Pool swap: `NOT IMPLEMENTED` (M5) |
 | Z02 | Fuzz add then full remove: returns no more than contributed | M10 | `NOT IMPLEMENTED` |
 | Z03 | Mixed 6/18-decimal scales near the top of the fuzz range | M10 | `NOT IMPLEMENTED` |
 | Z04 | Fuzz gross vs. net for the U8 taxed mock | M8 | `NOT IMPLEMENTED` |
 | Z05 | Fuzz L-α: for random `T` and `t < 10000`, implementation gross gives `net ∈ [T, T+1]` | M8 | `NOT IMPLEMENTED` |
-| Z06 | Boundary tests for each formula in ARCHITECTURE §6.6: just inside the sufficient condition succeeds; beyond the overflow threshold reverts; no wrong value returned | M5, M10 | `NOT IMPLEMENTED` |
+| Z06 | Boundary tests for each formula in ARCHITECTURE §6.6: just inside the sufficient condition succeeds; beyond the overflow threshold reverts; no wrong value returned | M5, M10 | `PASSED` for `getAmountOut` and `initialShares` (`test_Z06_*`); other §6.6 formulas: `NOT IMPLEMENTED` (M4/M8/M10) |
 
 Do not use `assume()` to exclude conditions the implementation is expected to handle.
 
 ### 11.1 Maths test design for `AMMMath` (M2, DECISIONS M2-9)
+
+**M2 results (2026-11-17):** `test/AMMMath.t.sol` 26 tests and `test/AMMPool.t.sol` 15 tests passed with the default 256 fuzz runs and again with `FOUNDRY_FUZZ_RUNS=10000`. Mutation check (temporary, reverted): removing the fee, rounding up, and returning `out + 1` each made the reference-case, floor and zero-output tests fail.
 
 **Independent classifier.** A test helper classifies `(a, rIn, rOut)` without calling `mulDiv` and without overflowing, in the same order as the implementation's checks:
 
