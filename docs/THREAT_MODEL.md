@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-17
 
-**Status:** Pre-implementation. **Every mitigation below is unimplemented and untested.** A mitigation reduces risk; it does not mean the attack is eliminated. Passing tests is not a proof of security.
+**Status:** Partially implemented. Implemented and tested so far (M2–M3): constructor checks (T11), reentrancy guard on `addLiquidity` (T1, smoke test only), measured nets on the initial deposit (T2, T5), the lock and LP-SELF supply controls (T10, T24). **All other mitigations below are unimplemented and untested.** A mitigation reduces risk; it does not mean the attack is eliminated. Passing tests is not a proof of security.
 
 Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [ARCHITECTURE.md](ARCHITECTURE.md). Test IDs: [TEST_MATRIX.md](TEST_MATRIX.md).
 
@@ -46,7 +46,7 @@ Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [
 | T7 | Outbound tax leaves the recipient short | swap, remove | MIN-NET: compare the recipient's actual increase with the user minimum (BI-6) | S04, S06, W04, W05, B07 | Recipient balance measurements are unreliable for special recipients (e.g. the token's own tax collector); unsupported |
 | T8 | Fee missing or miscomputed | swap | Exact formula (§6.4); fee-adjusted inequality with proof (§6.5); five reference cases incl. tightness (`out + 1` fails) | S02, S10, S11, S14, S15 | Tests sample behaviour; on-chain assertion `PENDING` (A9) |
 | T9 | Deficit (`balance < reserve`) | add, remove, swap | Entry check reverts those three; `sync()` lowers reserves and emits an event (U4) | R08 | Should not occur with supported tokens; if it does, LPs bear the loss |
-| T10 | Locked LP moved or burned | LP ERC-20 | Lock held by `address(this)`; code-review rules forbid any Pool-side approve/transfer/burn of its own LP (§7.9); BI-7 | P05, P06, I1 | Code review plus tests, not a formal proof |
+| T10 | Locked LP moved or burned | LP ERC-20 | Lock held by `address(this)`; `_update` rejects any movement or burn from the Pool and any mint/burn outside `nonReentrant` (DECISIONS M3-2); code-review rules (§7.9); BI-7 | P05–P08, P10, I1 | On-chain checks plus tests, not a formal proof |
 | T11 | Wrong `surplusRecipient` at deployment | deployment | Constructor rejects `address(0)`, `token0`, `token1`, `address(this)` | K02, K04 | Catches only those four values; any other wrong address is undetectable and immutable — redeploy and migrate |
 | T12 | `surplusRecipient` keeps mistaken transfers | skim | None on-chain | — | Entirely off-chain trust; must be disclosed |
 | T13 | Read-only reentrancy: a callback reads `getReserves()` mid-call | view functions | Effects before outbound transfers narrow the window | — | During the inbound `safeTransferFrom`, reserves are still pre-update; no dedicated guard; no in-scope consumer relies on these reads |
@@ -60,7 +60,7 @@ Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [
 | T21 | Unauthorised admin action | all | No privileged function exists | X03 | Deployed contracts cannot be paused or repaired |
 | T22 | LP allowance misuse | LP ERC-20 | Standard OZ behaviour | P02 | The standard ERC-20 approve race remains |
 | T23 | Token over-debits the Pool on outbound transfer (exclusive FOT or similar) | remove, swap, skim | A8: Pool balance must fall by exactly the amount sent, else revert (BI-5) | B06, X04 | Detects this one behaviour; does not make such tokens usable |
-| T24 | User sends LP tokens to the Pool address by mistake | LP ERC-20 | LP-SELF (ii): LP transfers to the Pool revert | P06 | LP sent to other wrong addresses is still unrecoverable (standard ERC-20 behaviour) |
+| T24 | User sends LP tokens to the Pool address by mistake | LP ERC-20 | LP-SELF (ii): LP transfers to the Pool revert, including zero-value transfers | P06, P09 | LP sent to other wrong addresses is still unrecoverable (standard ERC-20 behaviour) |
 
 ## 5. Excluded from the current attack surface
 

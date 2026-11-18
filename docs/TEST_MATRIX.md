@@ -26,21 +26,21 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 |---|---|---|
 | K01 | Either token zero (token0, token1 or both, any order) → `ZeroAddress`; identical → `IdenticalTokens`; unsorted → `TokensNotSorted`; fuzz: outcome matches an independent classifier | `PASSED` — `test_K01_*` (5 unit), `testFuzz_K01_K04_constructorMatchesClassifier`, `testFuzz_K01_zeroInEitherPosition` |
 | K02 | `surplusRecipient == address(0)` reverts | `PASSED` — `test_K02_zeroRecipientReverts` |
-| K03 | Immutables set correctly; reserves are 0; fee constants 30 / 10,000. (`totalSupply == 0` is checked in M3, when the LP ERC-20 exists.) | `PASSED` — `test_K03_initialState` (`totalSupply` part in M3) |
+| K03 | Immutables set correctly; reserves are 0; fee constants 30 / 10,000. (`totalSupply == 0` is checked in M3, when the LP ERC-20 exists.) | `PASSED` — `test_K03_initialState` (incl. `totalSupply == 0`, M3) |
 | K04 | `surplusRecipient` equal to `token0`, `token1`, or the Pool's own (predicted) address each revert | `PASSED` — `test_K04_*` (3 reverts + address-prediction control), `testFuzz_K01_K04_constructorMatchesClassifier` |
 
 ## 3. Liquidity provision (M3, M4, M8)
 
 | ID | Description | Milestone | Status |
 |---|---|---|---|
-| L01 | Initial: provider gets `floor(sqrt(net0 × net1)) − 1000`; Pool holds exactly 1000 LP | M3 | `NOT IMPLEMENTED` |
-| L02 | Initial reverts for zero amounts and for `sqrt(net0 × net1) ≤ 1000` | M3 | `NOT IMPLEMENTED` |
+| L01 | Initial: provider gets `floor(sqrt(net0 × net1)) − 1000`; Pool holds exactly 1000 LP | M3 | `PASSED` (M3) — `test_L01_initialDepositSharesAndLock` |
+| L02 | Initial reverts for zero amounts and for `sqrt(net0 × net1) ≤ 1000` | M3 | `PASSED` (M3) — `test_L02_zeroAmountsRevert`, `test_L17_*` |
 | L03 | Later deposit into a 1:2 Pool pulls only the optimal amounts | M4 | `NOT IMPLEMENTED` |
 | L04 | Several LPs get shares proportional to contributions | M4 | `NOT IMPLEMENTED` |
 | L05 | U8 taxed token: measured `net_i ∈ [T_i, T_i+1]`; shares from net; worked example of ARCHITECTURE §6.2 (gross 203, net 201) | M8 | `NOT IMPLEMENTED` |
-| L06 | Failed transfer / insufficient balance / insufficient allowance reverts with no state left | M4 | `NOT IMPLEMENTED` |
-| L07 | First depositor sets the initial price | M3 | `NOT IMPLEMENTED` |
-| L08 | `minShares` unmet reverts; expired deadline reverts; `block.timestamp == deadline` succeeds | M4 | `NOT IMPLEMENTED` |
+| L06 | Failed transfer / insufficient balance / insufficient allowance reverts with no state left | M4 | Initial path `PASSED` (M3, `test_L23_*`); later deposit `NOT IMPLEMENTED` (M4) |
+| L07 | First depositor sets the initial price | M3 | `PASSED` (M3) — `test_L07_firstDepositorSetsPrice` (18/6 decimals) |
+| L08 | `minShares` unmet reverts; expired deadline reverts; `block.timestamp == deadline` succeeds | M4 | Initial path `PASSED` (M3, `test_L18_*`, `test_L21_deadlineBoundary`); later deposit `NOT IMPLEMENTED` (M4) |
 | L09 | Required gross above cap reverts | M8 | `NOT IMPLEMENTED` |
 | L10a | Tax hint higher than actual reverts | M8 | `NOT IMPLEMENTED` |
 | L10b | Tax hint lower than actual reverts | M8 | `NOT IMPLEMENTED` |
@@ -48,23 +48,25 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 | L11 | Caller's measured debit per token ≤ its cap (unit + fuzz) | M4, M8 | `NOT IMPLEMENTED` |
 | L12 | Caller's token balances never increase during `addLiquidity` (no refund path) | M4, M8 | `NOT IMPLEMENTED` |
 | L13 | Inflation scenario: after a large direct transfer by an attacker, a later LP's shares are not rounded to zero and the transfer does not enter reserves | M6 | `NOT IMPLEMENTED` |
-| L14 | `recipient ∈ {address(0), Pool}` reverts | M4 | `NOT IMPLEMENTED` |
+| L14 | `recipient ∈ {address(0), Pool}` reverts | M4 | Initial path `PASSED` (M3, `test_L21_invalidRecipientReverts`); later deposit `NOT IMPLEMENTED` (M4) |
 | L15 | Initial deposit with a taxed token ignores the hints and uses measured net | M8 | `NOT IMPLEMENTED` |
-| L16 | `tax_iBps ≥ 10000` reverts | M8 (initial path in M3) | `NOT IMPLEMENTED` |
+| L16 | `tax_iBps ≥ 10000` reverts | M8 (initial path in M3) | Initial path `PASSED` (M3, `test_L21_L16_taxBpsBoundary`); later-deposit path `NOT IMPLEMENTED` (M8) |
 
 ### 3.1 M3 initial-deposit additions (DECISIONS M3-7)
 
+M3 results (2026-11-18): `test/AMMPoolLiquidity.t.sol` 37 tests passed (default runs and `FOUNDRY_FUZZ_RUNS=10000`); full suite 88/88. Mutation check (temporary, reverted): removing lock immobility, LP-SELF, the once-only lock condition, or the guard check; `<` instead of `<=` for the threshold; requested instead of measured amount; off-by-one `minShares` and deadline — each made at least one test fail.
+
 | ID | Description | Status |
 |---|---|---|
-| L17 | `gross = 999`, `1000` revert `InsufficientInitialLiquidity`; `gross = 1001` succeeds with 1 provider share | `NOT IMPLEMENTED` |
-| L18 | `minShares == shares` succeeds; `minShares == shares + 1` reverts `InsufficientShares` | `NOT IMPLEMENTED` |
-| L19 | U8 taxed token, initial deposit: shares and reserves use the measured balance difference, not the requested amount; different tax hints give identical results | `NOT IMPLEMENTED` |
-| L20 | Pre-existing surplus in both tokens: each measured net equals the amount transferred in this call; final reserves equal the nets; both surpluses unchanged (BI-2, initial path of B01) | `NOT IMPLEMENTED` |
-| L21 | Initial path argument checks: deadline (`==` succeeds, `+1` reverts), recipient `0`/Pool, zero amounts, `tax ≥ 10000` | `NOT IMPLEMENTED` |
-| L22 | `S > 0` reverts `LaterDepositNotImplemented` (temporary; replaced in M4) | `NOT IMPLEMENTED` |
-| L23 | Failing token1 (reverting `transferFrom`, `false` return, reverting `balanceOf`) rolls back the whole call, including token0's completed transfer | `NOT IMPLEMENTED` |
-| L24 | Reentrancy smoke test: a token callback re-entering `addLiquidity` reverts `ReentrancyGuardReentrantCall` (full attacks in M5) | `NOT IMPLEMENTED` |
-| L25 | `LiquidityAdded` and the two `Transfer` mint events carry the expected fields | `NOT IMPLEMENTED` |
+| L17 | `gross = 999`, `1000` revert `InsufficientInitialLiquidity`; `gross = 1001` succeeds with 1 provider share | `PASSED` — `test_L17_gross999Reverts`, `test_L17_gross1000Reverts`, `test_L17_gross1001SucceedsWithOneShare`, `test_L17_asymmetricGross1001` |
+| L18 | `minShares == shares` succeeds; `minShares == shares + 1` reverts `InsufficientShares` | `PASSED` — `test_L18_minSharesEqualSucceeds`, `test_L18_minSharesPlusOneReverts` |
+| L19 | U8 taxed token, initial deposit: shares and reserves use the measured balance difference, not the requested amount; different tax hints give identical results | `PASSED` — `test_L19_*`, `testFuzz_L19_anyValidHintGivesSameShares` |
+| L20 | Pre-existing surplus in both tokens: each measured net equals the amount transferred in this call; final reserves equal the nets; both surpluses unchanged (BI-2, initial path of B01) | `PASSED` — `test_L20_preExistingSurplusIsNotAttributed` |
+| L21 | Initial path argument checks: deadline (`==` succeeds, `+1` reverts), recipient `0`/Pool, zero amounts, `tax ≥ 10000` | `PASSED` — `test_L21_deadlineBoundary`, `test_L21_invalidRecipientReverts`, `test_L21_L16_taxBpsBoundary` |
+| L22 | `S > 0` reverts `LaterDepositNotImplemented` (temporary; replaced in M4) | `PASSED` — `test_L22_laterDepositRevertsUntilM4` (temporary) |
+| L23 | Failing token1 (reverting `transferFrom`, `false` return, reverting `balanceOf`) rolls back the whole call, including token0's completed transfer | `PASSED` — `test_L23_*` (4 tests) |
+| L24 | Reentrancy smoke test: a token callback re-entering `addLiquidity` reverts `ReentrancyGuardReentrantCall` (full attacks in M5) | `PASSED` (smoke) — `test_L24_tokenCallbackCannotReenterAddLiquidity` |
+| L25 | `LiquidityAdded` and the two `Transfer` mint events carry the expected fields | `PASSED` — `test_L25_events` |
 
 ## 4. Withdrawal (M4, M5, M8)
 
@@ -85,7 +87,7 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 |---|---|---|---|
 | S01 | Swaps work in both directions | M5 | `NOT IMPLEMENTED` |
 | S02 | Reference case 1: `1,000,000 / 1,000,000`, `a = 10,000` → `out = 9,871` | M5 | `PASSED` at maths level (`AMMMath`, M2) — `test_S02_referenceCase1`; Pool swap: `NOT IMPLEMENTED` (M5) |
-| S03 | `amountIn = 0` and zero reserves revert; floored `out = 0` (reference case 3): `AMMMath` returns 0 but `swapExactInput` must revert `InsufficientOutputAmount` (DECISIONS M2-5r) | M5 | Maths level: re-run after M2-5r (see below); Pool swap revert: `NOT IMPLEMENTED` (M5) |
+| S03 | `amountIn = 0` and zero reserves revert; floored `out = 0` (reference case 3): `AMMMath` returns 0 but `swapExactInput` must revert `InsufficientOutputAmount` (DECISIONS M2-5r) | M5 | Maths level `PASSED` after M2-5r (zero input/reserves revert; case 3 returns 0, `test_S03_*`); Pool swap revert: `NOT IMPLEMENTED` (M5) |
 | S04 | MIN-NET: `minNetAmountOut = out` succeeds, `out + 1` reverts; expired deadline reverts | M5 | `NOT IMPLEMENTED` |
 | S05 | Taxed input: pricing and accounting use measured net | M8 | `NOT IMPLEMENTED` |
 | S06 | Taxed output: minimum judged on recipient's actual receipt (e.g. min 100, receives 99 → revert) | M8 | `NOT IMPLEMENTED` |
@@ -105,7 +107,7 @@ v0.3's R05, R06 and R10 tested the `sync`/`skim` race. That race no longer exist
 
 | ID | Description | Milestone | Status |
 |---|---|---|---|
-| R01 | `getReserves()` returns recorded reserves; unchanged by a direct transfer | M2 | `PASSED` (M2, no reserve writer exists yet) — `test_R01_directTransferDoesNotChangeReserves`; re-run when writers exist |
+| R01 | `getReserves()` returns recorded reserves; unchanged by a direct transfer | M2 | `PASSED` — `test_R01_directTransferDoesNotChangeReserves` (M2), `test_R01_directTransferAfterDepositDoesNotChangeReserves` (M3) |
 | R02 | Any address can call `sync()` | M6 | `NOT IMPLEMENTED` |
 | R03 | `skim()` sends all surplus to `surplusRecipient`; reserves and price unchanged | M6 | `NOT IMPLEMENTED` |
 | R04 | `skim()` takes no recipient parameter; caller's balance does not increase | M6 | `NOT IMPLEMENTED` |
@@ -127,7 +129,7 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 
 | ID | Invariant | Description | Milestone | Status |
 |---|---|---|---|---|
-| B01 | BI-2 | `addLiquidity` with pre-existing surplus leaves both surpluses unchanged | M4 (surplus setup in M6) | `NOT IMPLEMENTED` |
+| B01 | BI-2 | `addLiquidity` with pre-existing surplus leaves both surpluses unchanged | M4 (surplus setup in M6) | Initial path `PASSED` (M3, `test_L20_*`); later deposit `NOT IMPLEMENTED` (M4/M6) |
 | B02 | BI-2 | `removeLiquidity` leaves both surpluses unchanged | M4 | `NOT IMPLEMENTED` |
 | B03 | BI-2 | `swapExactInput` leaves both surpluses unchanged | M5 | `NOT IMPLEMENTED` |
 | B04 | BI-3 | After `skim()`, every token that had surplus has `balance == reserve`; reserves unchanged | M6 | `NOT IMPLEMENTED` |
@@ -139,16 +141,16 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 
 | ID | Description | Dependency | Status |
 |---|---|---|---|
-| P01 | LP `transfer` moves ownership; `totalSupply` unchanged | — | `NOT IMPLEMENTED` |
-| P02 | `approve` / `transferFrom` / allowance follow the standard | — | `NOT IMPLEMENTED` |
-| P03 | `totalSupply` = minted − burned, including the locked 1000 | — | `NOT IMPLEMENTED` |
-| P04 | No external account can mint or burn LP directly | — | `NOT IMPLEMENTED` |
-| P05 | Pool's own LP balance is exactly 1000 after the first deposit and no sequence of calls changes it | — | `NOT IMPLEMENTED` |
-| P06 | LP-SELF: `transfer(pool, x)` and `transferFrom(…, pool, x)` revert `LPTransferToPool`, including `x = 0`; the initial lock mint still succeeds | — | `NOT IMPLEMENTED` |
-| P07 | Pool-held LP cannot move: `transfer`/`transferFrom` from the Pool revert `LockedLiquidity` (DECISIONS M3-2) | — | `NOT IMPLEMENTED` |
-| P08 | Mint or burn outside a `nonReentrant` function reverts `SupplyChangeOutsideGuard` (test-only harness) | — | `NOT IMPLEMENTED` |
-| P09 | Failed `transferFrom` (to the Pool, above allowance, above balance) leaves allowance and balances unchanged | — | `NOT IMPLEMENTED` |
-| P10 | After sequences of deposit, transfer, approve, transferFrom and failed calls: `totalSupply == 1000 + Σ holder balances`, Pool holds exactly 1000 | — | `NOT IMPLEMENTED` |
+| P01 | LP `transfer` moves ownership; `totalSupply` unchanged | — | `PASSED` — `test_P01_transferMovesOwnership`, `test_P01_metadata` |
+| P02 | `approve` / `transferFrom` / allowance follow the standard | — | `PASSED` — `test_P02_approveTransferFromAllowance` |
+| P03 | `totalSupply` = minted − burned, including the locked 1000 | — | `PASSED` (mint part; burn in M4) — `test_L01_initialDepositSharesAndLock`, `testFuzz_P10_*` |
+| P04 | No external account can mint or burn LP directly | — | `PASSED` — `test_P04_noExternalMintOrBurn` |
+| P05 | Pool's own LP balance is exactly 1000 after the first deposit and no sequence of calls changes it | — | `PASSED` (M3 operations; full sequences in M10 I1) — `test_P05_*`, `testFuzz_P10_*` |
+| P06 | LP-SELF: `transfer(pool, x)` and `transferFrom(…, pool, x)` revert `LPTransferToPool`, including `x = 0`; the initial lock mint still succeeds | — | `PASSED` — `test_P06_transferToPoolReverts`, `test_P06_transferFromToPoolReverts` |
+| P07 | Pool-held LP cannot move: `transfer`/`transferFrom` from the Pool revert `LockedLiquidity` (DECISIONS M3-2) | — | `PASSED` — `test_P07_poolHeldLPCannotMove` |
+| P08 | Mint or burn outside a `nonReentrant` function reverts `SupplyChangeOutsideGuard` (test-only harness) | — | `PASSED` — `test_P08_supplyChangesOutsideGuardRevert`, `test_P08_secondMintToPoolRejectedEvenWhenGuarded` |
+| P09 | Failed `transferFrom` (to the Pool, above allowance, above balance) leaves allowance and balances unchanged | — | `PASSED` — `test_P09_*` |
+| P10 | After sequences of deposit, transfer, approve, transferFrom and failed calls: `totalSupply == 1000 + Σ holder balances`, Pool holds exactly 1000 | — | `PASSED` — `testFuzz_P10_accountingHoldsAcrossSequences` |
 
 ## 9. Quote (M5)
 
@@ -189,6 +191,8 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 Do not use `assume()` to exclude conditions the implementation is expected to handle.
 
 ### 11.1 Maths test design for `AMMMath` (M2, DECISIONS M2-9)
+
+**M2-5r re-run (2026-11-18):** `test/AMMMath.t.sol` 27 tests passed (class B now expects 0; new exact A/B boundary fuzz), also with `FOUNDRY_FUZZ_RUNS=10000`.
 
 **M2 results (2026-11-17):** `test/AMMMath.t.sol` 26 tests and `test/AMMPool.t.sol` 15 tests passed with the default 256 fuzz runs and again with `FOUNDRY_FUZZ_RUNS=10000`. Mutation check (temporary, reverted): removing the fee, rounding up, and returning `out + 1` each made the reference-case, floor and zero-output tests fail.
 
