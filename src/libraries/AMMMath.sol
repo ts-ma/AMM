@@ -22,21 +22,21 @@ library AMMMath {
     error InsufficientInputAmount();
     /// @notice At least one reserve is zero, so no price exists.
     error InsufficientLiquidity();
-    /// @notice The output, rounded down, is zero.
-    error InsufficientOutputAmount();
 
     /// @notice Output of an exact-input swap (ARCHITECTURE §6.4).
     /// @dev out = floor(a·9970·rOut / (rIn·10000 + a·9970)).
     ///      Rounds down, in favour of the Pool. Because a·9970 / (rIn·10000 + a·9970) < 1
     ///      whenever rIn > 0, the result is always strictly below `reserveOut`.
     ///      Reverts (in this order): a == 0; either reserve == 0; Panic(0x11) if
-    ///      a·9970 or rIn·10000 + a·9970 exceeds 2^256 − 1 (ARCHITECTURE §6.6);
-    ///      result == 0 (e.g. reference case 3: 1 unit into a 1,000/1,000 Pool).
+    ///      a·9970 or rIn·10000 + a·9970 exceeds 2^256 − 1 (ARCHITECTURE §6.6).
+    ///      A floored result of 0 is RETURNED, not reverted (DECISIONS M2-5r, ADR-021), e.g.
+    ///      reference case 3 (1 unit into a 1,000/1,000 Pool). Any caller that transfers
+    ///      tokens — `swapExactInput` (M5) — must itself revert when the result is 0.
     ///      `mulDiv` computes the a·9970·rOut product in 512 bits, so that product never overflows.
     /// @param amountIn Net amount received by the Pool (`a`).
     /// @param reserveIn Recorded reserve of the input token before the swap (`rIn`).
     /// @param reserveOut Recorded reserve of the output token before the swap (`rOut`).
-    /// @return amountOut Amount the Pool sends out (`out`), 0 < out < reserveOut.
+    /// @return amountOut Amount the Pool would send out (`out`), 0 ≤ out < reserveOut.
     function getAmountOut(uint256 amountIn, uint256 reserveIn, uint256 reserveOut)
         internal
         pure
@@ -48,8 +48,6 @@ library AMMMath {
         uint256 amountInWithFee = amountIn * FEE_MULTIPLIER;
         uint256 denominator = reserveIn * BPS_DENOMINATOR + amountInWithFee;
         amountOut = Math.mulDiv(amountInWithFee, reserveOut, denominator);
-
-        if (amountOut == 0) revert InsufficientOutputAmount();
     }
 
     /// @notice Gross LP shares for the first deposit: floor(sqrt(net0 · net1)) (ARCHITECTURE §6.1).

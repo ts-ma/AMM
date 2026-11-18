@@ -90,6 +90,15 @@ contract AMMMathTest is Test {
         assertTrue(_mulLt(den, rOut - out - 1, rInD, rOut), "6.5 invariant fails for out + 1");
     }
 
+    /// @dev Zero-output class (DECISIONS M2-5r): the quote is exactly 0, and 0 is the correct
+    ///      floor because aFee·rOut < (0 + 1)·den (512-bit, cannot overflow). The swap-level
+    ///      revert for this case is tested in M5 (TEST_MATRIX S03, Q04).
+    function _assertZeroOutputProperties(uint256 a, uint256 rIn, uint256 rOut, uint256 out) internal pure {
+        assertEq(out, 0, "zero-output class returns 0");
+        uint256 aFee = a * FEE_MUL;
+        assertTrue(_mulLt(aFee, rOut, rIn * D + aFee, 1), "floor: aFee*rOut < den");
+    }
+
     /// @dev Calls the implementation and checks it behaves exactly as classified.
     function _checkAgainstClassifier(uint256 a, uint256 rIn, uint256 rOut) internal {
         Outcome expected = _classify(a, rIn, rOut);
@@ -97,9 +106,12 @@ contract AMMMathTest is Test {
             _assertSuccessProperties(a, rIn, rOut, harness.getAmountOut(a, rIn, rOut));
             return;
         }
+        if (expected == Outcome.ZeroOutput) {
+            _assertZeroOutputProperties(a, rIn, rOut, harness.getAmountOut(a, rIn, rOut));
+            return;
+        }
         if (expected == Outcome.ZeroInput) vm.expectRevert(AMMMath.InsufficientInputAmount.selector);
         else if (expected == Outcome.ZeroLiquidity) vm.expectRevert(AMMMath.InsufficientLiquidity.selector);
-        else if (expected == Outcome.ZeroOutput) vm.expectRevert(AMMMath.InsufficientOutputAmount.selector);
         else vm.expectRevert(stdError.arithmeticError);
         harness.getAmountOut(a, rIn, rOut);
     }
@@ -129,10 +141,10 @@ contract AMMMathTest is Test {
         _assertSuccessProperties(1_000_000, 1_000_000, 1_000_000, out);
     }
 
-    function test_S03_referenceCase3_zeroOutputReverts() public {
+    /// Reference case 3: the quote is 0 (M2-5r); the swap must revert on it (M5, S03/Q04).
+    function test_S03_referenceCase3_returnsZero() public view {
         assertEq(uint256(_classify(1, 1_000, 1_000)), uint256(Outcome.ZeroOutput));
-        vm.expectRevert(AMMMath.InsufficientOutputAmount.selector);
-        harness.getAmountOut(1, 1_000, 1_000);
+        _assertZeroOutputProperties(1, 1_000, 1_000, harness.getAmountOut(1, 1_000, 1_000));
     }
 
     function test_S14_referenceCase4_18to6Decimals() public view {
@@ -239,7 +251,8 @@ contract AMMMathTest is Test {
 
     /// Class B — zero output. Either rOut = 1 (out < rOut forces 0), or
     /// rIn·10000 > 9970·(rOut − 1) so that aMin ≥ 2, and a ∈ [1, aMin − 1].
-    function testFuzz_getAmountOut_B_zeroOutputReverts(uint256 rIn, uint256 rOut, uint256 a) public {
+    /// Expects a returned 0, not a revert (DECISIONS M2-9r); a = aMin − 1 is the tight edge.
+    function testFuzz_getAmountOut_B_zeroOutputReturnsZero(uint256 rIn, uint256 rOut, uint256 a) public view {
         rOut = bound(rOut, 1, FUZZ_MAX);
         if (rOut == 1) {
             rIn = bound(rIn, 1, FUZZ_MAX);
@@ -252,8 +265,16 @@ contract AMMMathTest is Test {
         }
 
         assertEq(uint256(_classify(a, rIn, rOut)), uint256(Outcome.ZeroOutput));
-        vm.expectRevert(AMMMath.InsufficientOutputAmount.selector);
-        harness.getAmountOut(a, rIn, rOut);
+        _assertZeroOutputProperties(a, rIn, rOut, harness.getAmountOut(a, rIn, rOut));
+    }
+
+    /// The boundary between classes A and B is exact: aMin − 1 gives 0, aMin gives ≥ 1.
+    function testFuzz_getAmountOut_AB_boundaryIsExact(uint256 rIn, uint256 rOut) public view {
+        rOut = bound(rOut, 2, FUZZ_MAX);
+        rIn = bound(rIn, 1, FUZZ_MAX);
+        uint256 aMin = _ceilDiv(rIn * D, FEE_MUL * (rOut - 1));
+        if (aMin > 1) assertEq(harness.getAmountOut(aMin - 1, rIn, rOut), 0);
+        assertGt(harness.getAmountOut(aMin, rIn, rOut), 0);
     }
 
     /// Class C — overflow. Three constructions, one per overflowing operation.
