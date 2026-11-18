@@ -60,9 +60,11 @@ contract AMMPool {
 
     /// @notice Recorded reserves (ARCHITECTURE §7.6). These are accounting values, not live
     ///         balances: tokens sent directly to the Pool do not change them.
-    /// @return Recorded reserve of token0.
-    /// @return Recorded reserve of token1.
-    function getReserves() external view returns (uint256, uint256) {
+    ///         Output names carry a trailing underscore so they do not shadow the state
+    ///         variables (DECISIONS M2-6r).
+    /// @return reserve0_ Recorded reserve of token0.
+    /// @return reserve1_ Recorded reserve of token1.
+    function getReserves() external view returns (uint256 reserve0_, uint256 reserve1_) {
         return (reserve0, reserve1);
     }
 }
