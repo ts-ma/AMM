@@ -23,7 +23,7 @@ User / test
 
 | Component | Responsibility | Status |
 |---|---|---|
-| `AMMPool` | Holds two tokens; records reserves; liquidity and swap maths; mints/burns LP; security checks. Inherits OpenZeppelin `ERC20` (it is the LP token) and `ReentrancyGuard`. | `APPROVED` (D1, D4, D11) |
+| `AMMPool` | Holds two tokens; records reserves; liquidity and swap maths; mints/burns LP; security checks. Inherits OpenZeppelin `ERC20` (it is the LP token) and `ReentrancyGuardTransient` (DECISIONS M3-5). | `APPROVED` (D1, D4, D11) |
 | `AMMFactory` | Sorts token addresses, rejects duplicates, deploys and registers Pools. Holds no user funds; no owner. | `APPROVED` (D1, D10) |
 | Maths helpers | Quote, integer square root (`Math.sqrt`), `Math.mulDiv`. | `APPROVED` (D12) |
 | Test-only mocks | Standard ERC-20 (18 and 6 decimals); U8 taxed ERC-20; exclusive-FOT mock (negative tests); reentrancy probe; failing / false-returning / no-return token; a token whose Pool balance can be reduced (deficit tests). | `APPROVED` |
@@ -54,7 +54,7 @@ Names are `PROPOSED`.
 | Pool | LP `totalSupply`, `balanceOf`, `allowance` | Inherited from OZ `ERC20`; includes the locked 1,000. | `APPROVED` |
 | Pool | `MINIMUM_LIQUIDITY = 1000` (`constant`) | Smallest LP units, held by `address(this)`. | `APPROVED` (U2) |
 | Pool | `FEE_BPS = 30`, `BPS_DENOMINATOR = 10_000` (`constant`) | No setter. | `APPROVED` (U1) |
-| Pool | Reentrancy lock | OZ `ReentrancyGuard`. | `APPROVED` (D11) |
+| Pool | Reentrancy lock | OZ `ReentrancyGuardTransient` (transient storage). | `APPROVED` (D11, M3-5) |
 | Factory | `getPair[token0][token1]` plus reverse lookup | At most one Pool per unordered pair. | `APPROVED` |
 | Factory | `allPairs` | Enumeration. | `APPROVED` (U11) |
 | Factory | `surplusRecipient` (`immutable`) shared by all Pools | — | `PENDING` (M7) |
@@ -207,7 +207,8 @@ Rounding down favours the LPs who remain.
 ```text
 aFee = a × 9970                                  // a × (D − FEE_BPS)
 out  = mulDiv(aFee, rOut, rIn × D + aFee)        // floor
-require a > 0, out > 0
+require a > 0                                    // AMMMath reverts InsufficientInputAmount
+require out > 0                                  // swapExactInput only; AMMMath returns 0 (M2-5r)
 reserveIn += a;  reserveOut −= out
 ```
 
@@ -304,6 +305,7 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 - **Threats:** wrong hint, over-debit, attributing earlier surplus, reentrancy via token callback, dilution, first-depositor manipulation.
 - **Tests:** L01–L14, B01, P05.
 - **Staging:** M4 implements and tests Tier 0 (`tax = 0`) with the full signature (U10); Tier 1 is tested in M8.
+- **M3:** only the initial (`S == 0`) branch; `S > 0` reverts `LaterDepositNotImplemented()` until M4 (DECISIONS M3-3). Exact checks, errors and event: DECISIONS M3-4. The deficit entry check is added in M6 (with reserves 0, no deficit can exist in M3).
 
 ### 7.3 `removeLiquidity(shares, min0Net, min1Net, recipient, deadline) → (net0, net1)`
 
@@ -324,7 +326,7 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 1. `nonReentrant`.
 2. Checks: `tokenIn ∈ {token0, token1}`; deadline; recipient (U7); `amountIn > 0`; reserves nonzero; no deficit.
 3. Inbound interaction: snapshot → `safeTransferFrom(msg.sender, this, amountIn)` → snapshot → `a`; require `a > 0`.
-4. Compute `out` (§6.4); require `out > 0`.
+4. Compute `out` (§6.4); require `out > 0`, else `InsufficientOutputAmount()` (the library quote itself may be 0, DECISIONS M2-5r).
 5. Effects: `reserveIn += a`; `reserveOut −= out`.
 6. Outbound interaction: snapshot Pool and recipient balances of `tokenOut` → `safeTransfer(recipient, out)` → require Pool decrease `== out` (A8) → `netOut` = recipient increase → require `netOut ≥ minNetAmountOut` (MIN-NET).
 7. Emit event; return `netOut`.
@@ -337,9 +339,10 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 ### 7.5 `getAmountOut(tokenIn, amountIn) → out` (`view`)
 
 - Returns §6.4 using recorded reserves, treating `amountIn` as the net input. For taxed tokens the caller must reduce the input and output by the tax; the result may be stale by execution time.
+- Returns **0** when the floored output is 0 (DECISIONS M2-5r); `swapExactInput` with the same inputs reverts (Q04).
 - **Tests:** Q01–Q03.
 
-### 7.6 `getReserves() → (reserve0, reserve1)` (`view`)
+### 7.6 `getReserves() → (reserve0_, reserve1_)` (`view`)
 
 - Returns recorded reserves, not balances. **Test:** R01.
 
@@ -375,7 +378,13 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 
 Evidence: these review rules plus P05/P06 and invariant I1. This is code-review-plus-test evidence, not a formal proof.
 
-**LP sent to the Pool (`APPROVED`, LP-SELF option ii).** Plain OZ `ERC20` would accept `transfer(pool, x)` / `transferFrom(…, pool, x)`, permanently locking those LP (no sweep exists, D10). The LP token therefore rejects any balance movement whose destination is `address(this)`, except the initial 1,000 lock mint. Candidate mechanism (`PROPOSED`, fixed in M3): override `_update(from, to, value)` and revert when `to == address(this) && from != address(0)`; the U7 recipient check already prevents user-directed mints to the Pool. Consequence: BI-7 holds with equality.
+**LP sent to the Pool (`APPROVED`, LP-SELF option ii).** Plain OZ `ERC20` would accept `transfer(pool, x)` / `transferFrom(…, pool, x)`, permanently locking those LP (no sweep exists, D10). The LP token therefore rejects any balance movement whose destination is `address(this)`, except the initial 1,000 lock mint. Mechanism (`APPROVED`, DECISIONS M3-2 / ADR-022): one override of `_update(from, to, value)`:
+
+1. `from == address(this)` → `LockedLiquidity()`. Pool-held LP can never be transferred or burned, so the lock argument above no longer relies on code review alone.
+2. `to == address(this)` → allowed only when `from == 0`, `totalSupply() == 0` and `value == MINIMUM_LIQUIDITY` (the first lock mint); otherwise `LPTransferToPool()`. Zero-value transfers to the Pool are also rejected.
+3. Any mint (`from == 0`) or burn (`to == 0`) while no `nonReentrant` function is executing → `SupplyChangeOutsideGuard()`. A future `_mint`/`_burn` call site placed in an unguarded function therefore fails in testing instead of silently changing supply.
+
+Review rule per milestone: every `_mint`/`_burn` call site in `src/` is listed and grep-checked. Consequence: BI-7 holds with equality and is enforced on-chain.
 
 **Tests:** P01–P06.
 

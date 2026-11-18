@@ -50,7 +50,21 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 | L13 | Inflation scenario: after a large direct transfer by an attacker, a later LP's shares are not rounded to zero and the transfer does not enter reserves | M6 | `NOT IMPLEMENTED` |
 | L14 | `recipient ∈ {address(0), Pool}` reverts | M4 | `NOT IMPLEMENTED` |
 | L15 | Initial deposit with a taxed token ignores the hints and uses measured net | M8 | `NOT IMPLEMENTED` |
-| L16 | `tax_iBps ≥ 10000` reverts | M8 | `NOT IMPLEMENTED` |
+| L16 | `tax_iBps ≥ 10000` reverts | M8 (initial path in M3) | `NOT IMPLEMENTED` |
+
+### 3.1 M3 initial-deposit additions (DECISIONS M3-7)
+
+| ID | Description | Status |
+|---|---|---|
+| L17 | `gross = 999`, `1000` revert `InsufficientInitialLiquidity`; `gross = 1001` succeeds with 1 provider share | `NOT IMPLEMENTED` |
+| L18 | `minShares == shares` succeeds; `minShares == shares + 1` reverts `InsufficientShares` | `NOT IMPLEMENTED` |
+| L19 | U8 taxed token, initial deposit: shares and reserves use the measured balance difference, not the requested amount; different tax hints give identical results | `NOT IMPLEMENTED` |
+| L20 | Pre-existing surplus in both tokens: each measured net equals the amount transferred in this call; final reserves equal the nets; both surpluses unchanged (BI-2, initial path of B01) | `NOT IMPLEMENTED` |
+| L21 | Initial path argument checks: deadline (`==` succeeds, `+1` reverts), recipient `0`/Pool, zero amounts, `tax ≥ 10000` | `NOT IMPLEMENTED` |
+| L22 | `S > 0` reverts `LaterDepositNotImplemented` (temporary; replaced in M4) | `NOT IMPLEMENTED` |
+| L23 | Failing token1 (reverting `transferFrom`, `false` return, reverting `balanceOf`) rolls back the whole call, including token0's completed transfer | `NOT IMPLEMENTED` |
+| L24 | Reentrancy smoke test: a token callback re-entering `addLiquidity` reverts `ReentrancyGuardReentrantCall` (full attacks in M5) | `NOT IMPLEMENTED` |
+| L25 | `LiquidityAdded` and the two `Transfer` mint events carry the expected fields | `NOT IMPLEMENTED` |
 
 ## 4. Withdrawal (M4, M5, M8)
 
@@ -71,7 +85,7 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 |---|---|---|---|
 | S01 | Swaps work in both directions | M5 | `NOT IMPLEMENTED` |
 | S02 | Reference case 1: `1,000,000 / 1,000,000`, `a = 10,000` → `out = 9,871` | M5 | `PASSED` at maths level (`AMMMath`, M2) — `test_S02_referenceCase1`; Pool swap: `NOT IMPLEMENTED` (M5) |
-| S03 | `amountIn = 0`, `out = 0` (reference case 3) and zero reserves revert | M5 | `PASSED` at maths level (`AMMMath`, M2) — zero input, zero reserves, reference case 3 (`test_S03_*`); Pool swap: `NOT IMPLEMENTED` (M5) |
+| S03 | `amountIn = 0` and zero reserves revert; floored `out = 0` (reference case 3): `AMMMath` returns 0 but `swapExactInput` must revert `InsufficientOutputAmount` (DECISIONS M2-5r) | M5 | Maths level: re-run after M2-5r (see below); Pool swap revert: `NOT IMPLEMENTED` (M5) |
 | S04 | MIN-NET: `minNetAmountOut = out` succeeds, `out + 1` reverts; expired deadline reverts | M5 | `NOT IMPLEMENTED` |
 | S05 | Taxed input: pricing and accounting use measured net | M8 | `NOT IMPLEMENTED` |
 | S06 | Taxed output: minimum judged on recipient's actual receipt (e.g. min 100, receives 99 → revert) | M8 | `NOT IMPLEMENTED` |
@@ -130,7 +144,11 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 | P03 | `totalSupply` = minted − burned, including the locked 1000 | — | `NOT IMPLEMENTED` |
 | P04 | No external account can mint or burn LP directly | — | `NOT IMPLEMENTED` |
 | P05 | Pool's own LP balance is exactly 1000 after the first deposit and no sequence of calls changes it | — | `NOT IMPLEMENTED` |
-| P06 | LP-SELF: `transfer(pool, x)` and `transferFrom(…, pool, x)` revert; the initial lock mint still succeeds | — | `NOT IMPLEMENTED` |
+| P06 | LP-SELF: `transfer(pool, x)` and `transferFrom(…, pool, x)` revert `LPTransferToPool`, including `x = 0`; the initial lock mint still succeeds | — | `NOT IMPLEMENTED` |
+| P07 | Pool-held LP cannot move: `transfer`/`transferFrom` from the Pool revert `LockedLiquidity` (DECISIONS M3-2) | — | `NOT IMPLEMENTED` |
+| P08 | Mint or burn outside a `nonReentrant` function reverts `SupplyChangeOutsideGuard` (test-only harness) | — | `NOT IMPLEMENTED` |
+| P09 | Failed `transferFrom` (to the Pool, above allowance, above balance) leaves allowance and balances unchanged | — | `NOT IMPLEMENTED` |
+| P10 | After sequences of deposit, transfer, approve, transferFrom and failed calls: `totalSupply == 1000 + Σ holder balances`, Pool holds exactly 1000 | — | `NOT IMPLEMENTED` |
 
 ## 9. Quote (M5)
 
@@ -139,6 +157,7 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 | Q01 | `getAmountOut` equals the actual swap output on the same state (Tier 0) | `NOT IMPLEMENTED` |
 | Q02 | Invalid `tokenIn`, zero input, zero reserves behave as in swap | `NOT IMPLEMENTED` |
 | Q03 | Quote uses recorded reserves and ignores surplus | `NOT IMPLEMENTED` |
+| Q04 | Where the floored output is 0, `getAmountOut` returns 0 and `swapExactInput` with the same inputs reverts `InsufficientOutputAmount` with no state change (unit: reference case 3; fuzz over class-B inputs of §11.1) | `NOT IMPLEMENTED` |
 
 ## 10. Factory (M7)
 
@@ -178,7 +197,7 @@ Do not use `assume()` to exclude conditions the implementation is expected to ha
 1. `a == 0` → `InsufficientInputAmount`.
 2. `rIn == 0` or `rOut == 0` → `InsufficientLiquidity`.
 3. Overflow → Panic `0x11` if `a > ⌊MAX/9970⌋`, or `rIn > ⌊MAX/10000⌋`, or `rIn·10000 > MAX − a·9970` (each step evaluated only after the previous one is known not to overflow).
-4. Zero output → `InsufficientOutputAmount` iff `aFee × rOut < den`, compared as exact 512-bit values.
+4. Zero output → returns 0 (DECISIONS M2-5r) iff `aFee × rOut < den`, compared as exact 512-bit values.
 5. Otherwise success.
 
 So validity is never judged only by "all three inputs > 0".
@@ -190,7 +209,7 @@ So validity is never judged only by "all three inputs > 0".
 | Class | Input construction | Assertions |
 |---|---|---|
 | A — success | `rIn ∈ [1, 2^112]`, `rOut ∈ [2, 2^112]`, `a ≥ aMin = ⌈rIn·10000 / (9970·(rOut−1))⌉` (the exact condition for `out ≥ 1`) | classifier says success; `out < rOut`; floor: `out·den ≤ aFee·rOut < (out+1)·den`; §6.5: `den·(rOut−out) ≥ (rIn·D)·rOut`; tightness: `den·(rOut−out−1) < (rIn·D)·rOut` (i.e. `out + 1` violates §6.5) |
-| B — zero output | `rOut = 1` with any `a`, or `rIn > 0.997·(rOut−1)` and `a ∈ [1, aMin − 1]` | classifier says zero output; call reverts with `InsufficientOutputAmount()`; no quote is required |
+| B — zero output | `rOut = 1` with any `a`, or `rIn > 0.997·(rOut−1)` and `a ∈ [1, aMin − 1]` | classifier says zero output; call returns exactly 0 (M2-5r); floor lower bound `0 ≤ aFee·rOut < den` re-checked. The swap-level revert is tested in M5 (S03, Q04) |
 | C — overflow | one of: `a > ⌊MAX/9970⌋`; `rIn > ⌊MAX/10000⌋`; or both in range but `rIn·10000 + a·9970 > MAX` | classifier says overflow; call reverts with Panic `0x11` |
 
 A fourth fuzz test feeds raw `uint256` triples to the classifier and checks the implementation behaves exactly as classified (any class, including zero input and zero reserves).
