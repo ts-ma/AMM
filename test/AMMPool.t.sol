@@ -143,6 +143,10 @@ contract AMMPoolTest is Test {
         assertEq(r1, 0);
         assertEq(pool.FEE_BPS(), 30);
         assertEq(pool.BPS_DENOMINATOR(), 10_000);
+        // M3 part of K03: the LP token exists and starts empty.
+        assertEq(pool.totalSupply(), 0);
+        assertEq(pool.balanceOf(address(pool)), 0);
+        assertEq(pool.MINIMUM_LIQUIDITY(), 1000);
     }
 
     /// DECISIONS M2-2: no code-existence check in M2 (left PENDING for M7).
