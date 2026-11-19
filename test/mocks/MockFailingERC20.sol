@@ -3,15 +3,19 @@ pragma solidity 0.8.38;
 
 import {MockERC20} from "./MockERC20.sol";
 
-/// @title MockFailingERC20 — token whose transferFrom / balanceOf can be made to fail. TEST-ONLY.
+/// @title MockFailingERC20 — token whose transferFrom / transfer / balanceOf can be made to fail. TEST-ONLY.
 /// @notice Used to show that a failure in one external call rolls back the whole Pool call,
-///         including transfers of the other token that already completed (TEST_MATRIX L23).
+///         including transfers of the other token that already completed (TEST_MATRIX L23, W09).
+/// @dev Outbound modes (RevertTransfer, ReturnFalseTransfer) appended in M4 (DECISIONS M4-4);
+///      existing modes keep their meaning and numbering.
 contract MockFailingERC20 is MockERC20 {
     enum Mode {
         None,
         RevertTransferFrom,
         ReturnFalseTransferFrom,
-        RevertBalanceOf
+        RevertBalanceOf,
+        RevertTransfer,
+        ReturnFalseTransfer
     }
 
     error MockFailure();
@@ -28,6 +32,12 @@ contract MockFailingERC20 is MockERC20 {
         if (mode == Mode.RevertTransferFrom) revert MockFailure();
         if (mode == Mode.ReturnFalseTransferFrom) return false;
         return super.transferFrom(from, to, value);
+    }
+
+    function transfer(address to, uint256 value) public override returns (bool) {
+        if (mode == Mode.RevertTransfer) revert MockFailure();
+        if (mode == Mode.ReturnFalseTransfer) return false;
+        return super.transfer(to, value);
     }
 
     function balanceOf(address account) public view override returns (uint256) {
