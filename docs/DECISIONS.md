@@ -170,6 +170,8 @@ In dependency order.
 | L-α gross selection: compare the current ceiling-gross formula with the minimal-necessary-gross alternative; decide whether a one-unit over-delivery is allowed and how the user cap applies (ARCHITECTURE §6.2) | Start of M8 | `PENDING` |
 | A9 final choice: on-chain swap assertion or tests only | During M5 | `PENDING` |
 | Factory: one shared `surplusRecipient` for all Pools; token code-existence check; whether Pool stores `factory` | M7 | `PENDING` |
+| LP-share dust: keep floor-shares (Uniswap V2 style) or switch to shares-first with ceiling amounts (ERC-4626 `mint` style); touches D6/U9 steps 2 and 5 (DECISIONS M4H-4) | Start of M8 (student asked to be reminded) | `PENDING` |
+| Strict `[T, T + 1]` net check vs. relying on `minShares` only for unknown token tax (DECISIONS M4H-4) | Start of M8 (student asked to be reminded) | `PENDING` |
 | D14 | — | `PENDING` |
 | Protocol fee, `feeTo`, owner/pause, separate surplus accounting, `uint112` packing | — | `FUTURE-ONLY` |
 
@@ -222,3 +224,14 @@ In dependency order.
 | M4-7 | Boundary tests | Z06 covers **arithmetic boundaries** of the M4 formulas (later shares `mulDiv(net, S, r)`, L-α target `mulDiv(cap, r_other, r_this)`, redemption `mulDiv(shares, r, S)`): just inside succeeds, just beyond reverts with the exact Panic. New ID Z07 covers **business-invariant boundaries**: `T_i == 0`, `shares == 0`, `amount_i == 0`, `[T, T + 1]`, `minShares`, `min_iNet`, the 1,000 lock — each asserting the exact custom error. | `APPROVED` |
 | M4-8 | Revert assertions (all milestones from M4) | Every revert test asserts the exact error: selector plus arguments for errors with arguments, Panic code for panics. A bare `vm.expectRevert()` is not used, so a wrong check order cannot pass unnoticed. | `APPROVED` |
 | M4-9 | Commits | `docs`: M4 decisions; `test`: outbound-failure mocks; `feat`: Tier 0 later deposit + tests; `feat`: `removeLiquidity` + tests; `docs`: M4 results. | `APPROVED` |
+
+M4 accepted 2026-11-19 (tag `m4-deposit-withdraw-accepted`).
+
+### 11.1 M4 hardening (branch `m4-hardening`, approved 2026-11-19)
+
+| ID | Topic | Decision | Status |
+|---|---|---|---|
+| M4H-1 | Burn before `mulDiv` in `removeLiquidity` | Confirmed by measurement (TEST_MATRIX §14, H1): cheaper on success (−6 gas) and on the insufficient-LP revert (about −4,600 gas, median), 2 bytes smaller, and yields the exact `ERC20InsufficientBalance`. Student rule: prefer the lower-gas order. | `APPROVED` |
+| M4H-2 | L-α target overflow (found by the M4 differential check) | Before: with `r1 > r0` and a very large `amount0Max` (e.g. caps `(type(uint256).max, 100)`), `mulDiv(amount0Max, r1, r0)` overflowed with Panic `0x11` although the token1 cap should bind. Fix chosen **by gas** (student rule: gas is the leading criterion; TEST_MATRIX §14, H2): compute `Math.mul512(amount0Max, r1)` once; `hi == 0` → `target1 = lo / r0`; `0 < hi < r0` → `mulDiv`; `hi ≥ r0` means the exact target exceeds `2^256 − 1 ≥ amount1Max`, so the token1 branch is taken directly; that branch uses the same fast path. Results are identical to the old code on every input where it did not overflow; inputs that used to Panic now follow the correct branch. To fit the stack, the temporary hint check (M4-1) moves from `_addLater` to `addLiquidity`'s `S > 0` branch (same check, same order: still after all M3-4 checks and before any transfer). | `APPROVED` |
+| M4H-3 | Z06 by differential fuzzing | A test-only oracle with independent 512-bit arithmetic (`Wide512`, no OZ `mulDiv`) predicts the exact outcome (return values or exact revert bytes) of a later deposit over the full `uint256` range of caps and balances and extreme reserve ratios; the Pool must match exactly. Committed as a `test` commit. | `APPROVED` |
+| M4H-4 | M8 reminders | At the start of M8 the student is reminded to discuss (a) LP-share dust (shares-first option) and (b) strict `[T, T + 1]` vs. `minShares` only (§8). | `APPROVED` |

@@ -285,4 +285,29 @@ If any setting changes, earlier measurements are not comparable with later ones;
 | G01 | `swapExactInput` gas with and without the on-chain §6.5 assertion | Input to the A9 decision | M5 | `NOT IMPLEMENTED` |
 | G02 | Gas snapshot of all public functions | Report and later optimisation baseline | M10 | `NOT IMPLEMENTED` |
 
-**Current status: no gas measurement has been made.**
+### 14.1 M4 hardening measurements (2026-11-19)
+
+Configuration verified with `forge config` immediately before measuring: `solc` 0.8.38, optimizer on, 200 runs, `evm_version = osaka`, `via_ir = false`, OpenZeppelin v5.7.0, forge 1.9.0. Temporary variants were applied by a script outside the repository and reverted afterwards.
+
+**H1 — `removeLiquidity` order** (`forge test --gas-report`, calls from `test_W01_proportionalRedemption`, `test_W06_lastLPExitsLockRemains`, `test_W10_classA_*`; 2 successful + 4 reverting calls):
+
+| Order | Min (revert) | Median (revert) | Max (success) | Runtime size |
+|---|---:|---:|---:|---:|
+| Burn, then `mulDiv` (kept) | 27,926 | 28,160 | 123,262 | 6,071 B |
+| `mulDiv`, then burn | 30,469 | 32,732 | 123,268 | 6,073 B |
+
+**H2 — L-α step 2 overflow fix** (one later deposit measured with `gasleft()` around the external call; Pool `(1000e18, 2000e18)`, caller's storage pre-warmed; caps `(100e18, 300e18)` → token0 cap binds; `(100e18, 150e18)` → token1 cap binds; `(type(uint256).max, 100e18)`):
+
+| Variant | token0-cap branch | token1-cap branch | `(MAX, 100e18)` | Runtime size |
+|---|---:|---:|---|---:|
+| V0 before (inline `mulDiv`) | 96,170 | 96,425 | Panic `0x11` | 6,071 B |
+| V0 in a private helper | 96,240 | 96,495 | Panic | 6,099 B |
+| V1 helper: `mul512` guard + `mulDiv` | 96,427 | 96,684 | 96,805 | 6,143 B |
+| V2 helper: `mul512` once, fast division | 96,258 | 96,515 | 96,834 | 6,202 B |
+| V3 helper: `tryMul` fast path | 96,267 | 96,524 | 96,974 | 6,255 B |
+| V4 helper: fast division on both branches | 96,258 | 96,476 | 96,795 | 6,238 B |
+| V1' inline guard + `mulDiv` (hint check moved) | 96,341 | 96,596 | 96,717 | 6,101 B |
+| V2' inline `mul512` once (hint check moved) | 96,186 | 96,441 | 96,751 | 6,161 B |
+| **V4' inline, fast division on both branches (hint check moved) — chosen** | **96,173** | **96,389** | **96,708** | 6,195 B |
+
+V4' costs +3 gas on the token0-cap branch and saves 36 gas on the token1-cap branch per call; the one-off deployment cost of the extra 124 bytes is about 24,800 gas (200 gas per byte). These are single-scenario measurements, not a full gas snapshot (that is G02, M10).
