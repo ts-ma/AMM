@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-19
 
-**Status:** Target architecture, partly implemented (M2–M4 accepted; M5 in progress). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
+**Status:** Target architecture, partly implemented (M2–M5 accepted; M6 in progress). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
 Status labels are defined in [DECISIONS.md](DECISIONS.md) §0; DECISIONS.md is authoritative for status. Anything `PROPOSED` or `PENDING` needs student approval before implementation.
 
@@ -92,6 +92,9 @@ Uniswap V2's unconditional `reserve := balance` is not used: it would silently a
 - `addLiquidity`, `removeLiquidity` and `swapExactInput` revert at entry if **either** token is in deficit.
 - `sync()` lowers the affected reserve to the balance and emits an event. The loss is borne by all LPs pro rata. With no deficit, `sync()` returns without change (U5).
 - `skim()` is not blocked by a deficit: it handles each token independently (A2). Example: token1 in deficit and token0 with surplus → `skim()` sends token0's surplus and skips token1.
+- Entry check placement and error `ReserveDeficit()`: DECISIONS M6-2.
+
+**Terminal pool (`APPROVED`, DECISIONS M6-1 / ADR-023).** If `sync()` lowers a reserve to 0 while `totalSupply() > 0`, the Pool is terminal: `addLiquidity` and `swapExactInput` revert `InsufficientLiquidity()`; `removeLiquidity` pays 0 of the zero-reserve token and the proportional amount of the other (§6.3, M4-3r), so LPs recover the remaining assets. Known limitations: the Pool can never trade again through the current interface, and the reserves backing the 1,000 locked LP can never be redeemed. Recovery is an extension candidate (DECISIONS §8).
 
 ### 5.4 Surplus (`APPROVED`, Gate R=(b))
 
@@ -193,7 +196,9 @@ To decide at that time: whether a one-unit over-delivery is acceptable, the exac
 
 ```text
 amount_i = mulDiv(shares, r_i, S)        // floor; ≤ r_i because shares ≤ S
-require amount0 > 0 and amount1 > 0
+require not (amount0 == 0 and amount1 == 0)
+require amount_i > 0 for every token with r_i > 0     // M4-3r; r_i == 0 only in a terminal pool:
+                                                      // no transfer, net_i = 0, MIN-NET still applies
 _burn(msg.sender, shares); reserve_i −= amount_i
 send amount_i to recipient; MIN-NET: recipient increase ≥ min_iNet
 ```
@@ -307,13 +312,14 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 - **Staging:** M4 implements and tests Tier 0 (`tax = 0`) with the full signature (U10); Tier 1 is tested in M8.
 - **M3:** only the initial (`S == 0`) branch; `S > 0` reverted `LaterDepositNotImplemented()` (DECISIONS M3-3). Exact checks, errors and event: DECISIONS M3-4. The deficit entry check is added in M6 (with reserves 0, no deficit can exist in M3).
 - **M4:** `S > 0` with both hints 0 follows §6.2 with `t = 0` (`g_i = T_i`); errors per DECISIONS M4-2. `S > 0` with any non-zero hint reverts `TaxedLaterDepositNotImplemented()` before any transfer until M8 (DECISIONS M4-1).
+- **M6:** in the `S > 0` branch only, in this order before any transfer: deficit → `ReserveDeficit()` (M6-2); either reserve 0 → `InsufficientLiquidity()` (terminal pool, M6-1); then the temporary hint check. With `S == 0` both reserves are 0, so no deficit can exist and the check is skipped.
 
 ### 7.3 `removeLiquidity(shares, min0Net, min1Net, recipient, deadline) → (net0, net1)`
 
 1. `nonReentrant`.
-2. Checks: deadline; recipient (U7); `shares > 0`; no deficit.
+2. Checks: deadline; recipient (U7); `shares > 0`; no deficit (`ReserveDeficit()`, before the burn; M6-2).
 3. Effects: `S := totalSupply()`; `_burn(msg.sender, shares)` (reverts `ERC20InsufficientBalance` if the caller's LP is insufficient — done before the `mulDiv` so an oversized `shares` never surfaces as an overflow Panic, DECISIONS M4-3).
-4. `amount_i = mulDiv(shares, r_i, S)`; require both `> 0` (`InsufficientLiquidityBurned`); `reserve_i −= amount_i`.
+4. `amount_i = mulDiv(shares, r_i, S)`; `InsufficientLiquidityBurned` if both are 0 or if `amount_i == 0` with `r_i > 0` (M4-3r); `reserve_i −= amount_i`. A token with `r_i == 0` (terminal pool) is not transferred in step 5; its `net_i = 0` is still checked against `min_iNet`.
 5. Outbound interaction, per token: snapshot Pool and recipient balances → `safeTransfer(recipient, amount_i)` → require Pool decrease `== amount_i` (A8) → `net_i` = recipient increase → require `net_i ≥ min_iNet` (MIN-NET).
 6. Emit event.
 
@@ -325,7 +331,7 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 ### 7.4 `swapExactInput(tokenIn, amountIn, minNetAmountOut, recipient, deadline) → netOut`
 
 1. `nonReentrant`.
-2. Checks, in order (DECISIONS M5-1): deadline (`DeadlineExpired`); recipient (U7, `InvalidRecipient`); `tokenIn ∈ {token0, token1}` (`InvalidTokenIn`); `amountIn > 0` (`InsufficientInputAmount`, M5-2); both recorded reserves nonzero (`InsufficientLiquidity`), read once and cached before any transfer. **No deficit check in M5**: it is added in M6 for add, remove and swap together (DECISIONS M4-6, M5-1).
+2. Checks, in order (DECISIONS M5-1): deadline (`DeadlineExpired`); recipient (U7, `InvalidRecipient`); `tokenIn ∈ {token0, token1}` (`InvalidTokenIn`); `amountIn > 0` (`InsufficientInputAmount`, M5-2); both recorded reserves nonzero (`InsufficientLiquidity`), read once and cached before any transfer; no deficit (`ReserveDeficit()`, added in M6 for add, remove and swap together; DECISIONS M4-6, M5-1, M6-2).
 3. Inbound interaction: snapshot → `safeTransferFrom(msg.sender, this, amountIn)` → snapshot → `a`; `a == 0` reverts `InsufficientInputAmount` inside `AMMMath` (no separate Pool check).
 4. Compute `out` (§6.4); require `out > 0`, else `InsufficientOutputAmount()` (the library quote itself may be 0, DECISIONS M2-5r).
 5. Effects: `reserveIn += a`; `reserveOut −= out`.
@@ -350,8 +356,10 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 
 ### 7.7 `sync()`
 
+`sync() external nonReentrant` (DECISIONS M6-4).
+
 1. `nonReentrant`.
-2. Per token: `b = balance`; if `b < reserve`, set `reserve = b` and emit an event; else do nothing.
+2. Per token (token0 then token1): `b = balance`; if `b < reserve`, emit `ReserveSynced(token, reserve, b)` and set `reserve = b`; else do nothing (no write, no event).
 
 - No outbound transfer; callable by anyone.
 - **Postconditions:** BI-4.
@@ -359,8 +367,10 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 
 ### 7.8 `skim()`
 
+`skim() external nonReentrant` (DECISIONS M6-4).
+
 1. `nonReentrant`. No parameters.
-2. Per token, independently: `b = balance`; if `b > reserve`, `x = b − reserve`; snapshot → `safeTransfer(surplusRecipient, x)` → require Pool decrease `== x` (A8); emit event. Otherwise skip.
+2. Per token, independently (token0 then token1): `b = balance`; if `b > reserve`, `x = b − reserve`; snapshot → `safeTransfer(surplusRecipient, x)` → require Pool decrease `== x` (A8, `OutboundTransferMismatch`); emit `SurplusSkimmed(token, x)`. Otherwise (equal or deficit) skip. The recipient's receipt is not measured (no MIN-NET).
 
 - Never changes reserves; not blocked by a deficit in the other token (A2).
 - If either transfer fails, the whole `skim()` reverts, so neither token's surplus is sent in that call; other functions are unaffected.
@@ -419,6 +429,8 @@ Typed events for: pair creation, liquidity added, liquidity removed, swap, defic
 
 - `LiquidityAdded(address indexed sender, address indexed recipient, uint256 net0, uint256 net1, uint256 shares)` — `APPROVED` (M3-4); used for initial and later deposits.
 - `LiquidityRemoved(address indexed sender, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1)` — `APPROVED` (M4-3); amounts are the Pool-side reserve decreases. The recipient's actual receipt is the function's return value; MIN-NET is enforced on-chain from balance snapshots, not from events.
+- `ReserveSynced(address indexed token, uint256 previousReserve, uint256 newReserve)` — `APPROVED` (M6-4); one per lowered token, only when a reserve actually changes; the LP loss is `previousReserve − newReserve`.
+- `SurplusSkimmed(address indexed token, uint256 amount)` — `APPROVED` (M6-4); one per token with surplus; `amount` is the Pool-side decrease (A8); the recipient is always `surplusRecipient`.
 - `Swap(address indexed sender, address indexed recipient, address tokenIn, uint256 amountIn, uint256 amountOut, uint256 netOut)` — `APPROVED` (M5-3). Three distinct, non-interchangeable quantities: `amountIn` = `a`, the Pool's measured input increase in this call; `amountOut` = `out`, the Pool's measured output decrease (= `reserveOut` decrease, checked by A8); `netOut` = the recipient's measured output increase (MIN-NET basis; below `amountOut` for a taxed output).
 
 ## 10. Not in the current version

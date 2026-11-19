@@ -9,14 +9,14 @@ Workflow rules: root `CLAUDE.md`. Status labels: [DECISIONS.md](DECISIONS.md) §
 
 | Item | Status |
 |---|---|
-| Architecture documents (`docs/`, five files) | Maintained per milestone; M5 decisions recorded (DECISIONS §12) |
-| Git | M1, M2, M3 accepted (tags `m1-setup-accepted`, `m2-pool-skeleton-accepted`, `m3-lp-initial-deposit-accepted`, merged to `main`); M4 accepted (tag `m4-deposit-withdraw-accepted`, merged to `main`); M4 hardening accepted (tag `m4-hardening-accepted` on `d355fec`, merged to `main`); M5 implemented on `m5-swap`, awaiting review |
+| Architecture documents (`docs/`, five files) | Maintained per milestone; M6 decisions recorded (DECISIONS §13) |
+| Git | M1, M2, M3 accepted (tags `m1-setup-accepted`, `m2-pool-skeleton-accepted`, `m3-lp-initial-deposit-accepted`, merged to `main`); M4 accepted (tag `m4-deposit-withdraw-accepted`, merged to `main`); M4 hardening accepted (tag `m4-hardening-accepted` on `d355fec`, merged to `main`); M5 accepted (tag `m5-swap-accepted` on `deb66ba`, merged to `main`); M6 in progress on `m6-sync-skim` |
 | AMM contracts | `AMMPool`: constructor checks, LP ERC-20 with `_update` supply controls, `addLiquidity` (initial with 1,000 lock; Tier 0 later deposit; non-zero hints on later deposits temporarily rejected until M8), `removeLiquidity` with MIN-NET and A8, `swapExactInput` (measured input, A8, MIN-NET; no deficit check until M6), `getAmountOut`, `getReserves`; `AMMMath`: quote (returns 0 for zero output), initial shares |
 | Tests | 208 passing: Counter 2, MockERC20 7, OutboundMocks 6, SwapMocks 8, AMMMath 27, AMMPool 15, AMMPoolLiquidity 36, AMMPoolDeposit 26, AMMPoolDepositDifferential 2, AMMPoolWithdraw 20, AMMPoolSwap 37, AMMPoolReentrancy 17, AMMPoolOwnerless 5 |
 | Dependencies | forge 1.9.0, forge-std 1.17.0, OpenZeppelin Contracts v5.7.0 (all plain directories, not submodules); compiler pinned per U12 |
 | Gas measurements | M4 hardening (TEST_MATRIX §14.1); M5 G01 swap assertion (§14.2); full snapshot G02 in M10 |
 
-Accepted so far: M1, M2, M3, M4, M4 hardening. Only the student accepts milestones.
+Accepted so far: M1, M2, M3, M4, M4 hardening, M5. Only the student accepts milestones.
 
 ## 2. Workflow per milestone
 
@@ -39,7 +39,7 @@ Dates are targets, not commitments.
 | M3 | LP ERC-20; initial deposit; lock in `address(this)` | LP `name`/`symbol`; LP-SELF override mechanism | Supply accounting; BI-7; lock review rules hold | L01, L02, L07, P01–P06 | 11/18 |
 | M4 | Later optimal deposit (Tier 0, full U10 signature) and proportional withdrawal with MIN-NET and A8 | Signatures, events (approved, DECISIONS §11) | Ratios, fairness, minima, atomicity, dust, BI-2/5/6, lock untouched | L03, L04, L06, L08, L11, L12, L14, L26, L27, W01–W06, W08–W11, B01 (later), B02, B06, B07, Z06 (M4 formulas), Z07 | 11/19 |
 | M5 | `swapExactInput`, `getAmountOut`, 30 bps, `ReentrancyGuard` | Signatures, events; **A9 final choice after G01** | Both directions, MIN-NET, reentrancy, exact formula, inequality, references | S01–S04, S08–S15, Q01–Q03, W07, X01–X03, B03, Z01, Z06, G01 | 11/20 |
-| M6 | Downward-only `sync()`, per-token `skim()`, deficit entry checks | Event fields; **zero-reserve recovery rule** (DECISIONS M4-6) | Surplus isolation, deficit rules, A2, order independence, zero-reserve recovery | R02–R08, R10–R17, S07, L13, B01, B04, B05 | 11/21 |
+| M6 | Downward-only `sync()`, per-token `skim()`, deficit entry checks, terminal-pool rules | Approved (DECISIONS §13; zero-reserve rule = M6-1 option A); B snapshot reuse decided after the benchmark (M6-3) | Surplus isolation, deficit rules, A2, order independence, zero-reserve recovery, mutation check (M6-6) | R02–R08, R10–R22, S07, L13, B01, B04–B06, B08, X01 (M6 extension), X03 | 11/21 |
 | M7 | `AMMFactory` | Shared recipient; code-existence check; Pool stores `factory` | Uniqueness, reverse lookup, isolation, full regression, size | F01–F07 | 11/21 |
 | M8 | Tier 1: U8 taxed mock, exclusive-FOT mock, L-α, taxed outputs | L-α step-3 gross rule comparison (ceiling vs. minimal necessary gross; one-unit over-delivery; cap handling) | Caps, `[T, T+1]`, wrong hints revert, net minima, A8 detection | L05, L09–L10c, L15, L16, S05, S06, W05, R09, X04, Z04, Z05 | 11/22–23 |
 | M9 | Protocol fee | — | **Not in scope** (`FUTURE-ONLY`); needs fresh approval | C01–C07 | — |
@@ -59,7 +59,7 @@ Write the matching report section during each milestone, not only in M11.
 | M3 | `feat`: LP token, initial deposit and lock + tests |
 | M4 | `docs`: M4 decisions; `test`: outbound-failure mocks; `feat`: Tier 0 later deposit + tests; `feat`: `removeLiquidity` + tests; `docs`: M4 results (DECISIONS M4-9) |
 | M5 | `docs`: M5 decisions; `test`: reentrancy / no-return mocks; `feat`: `swapExactInput` + tests; `feat`: `getAmountOut` + tests; `test`: reentrancy suite and ownerless ABI checks; `docs`: G01 result (then A9 decision); `docs`: M5 results (DECISIONS M5-8) |
-| M6 | `feat`: `sync` + tests; `feat`: `skim` + tests |
+| M6 | `docs`: M6 decisions; `test`: `MockDeficitERC20`; `feat`: `sync` + tests; `feat`: deficit entry check + tests; `feat`: terminal-pool rules + tests; `feat`: `skim` + tests; `test`: cross-state / reentrancy scenarios; `docs`: gas and B benchmark (then B decision); `docs`: M6 results (DECISIONS M6-7) |
 | M7 | `feat`: Factory + tests; `test`: regression fixtures |
 | M8 | `test`: taxed and exclusive-FOT mocks; `feat`: L-α + tests; `feat`: taxed-output handling + tests |
 | M10 | `test`: fuzz / invariants; `docs`: gas data |

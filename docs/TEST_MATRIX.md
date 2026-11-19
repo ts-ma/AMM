@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-19
 
-**Status:** Rows marked `PASSED` (M1–M5) are implemented and were run. Everything else is a plan, not a record of passing tests. "Maths level" means the library function was tested; the Pool function that uses it does not exist yet. Record a result and the test function name only after the test has actually been run.
+**Status:** Rows marked `PASSED` (M1–M5; M6 in progress) are implemented and were run. Everything else is a plan, not a record of passing tests. "Maths level" means the library function was tested; the Pool function that uses it does not exist yet. Record a result and the test function name only after the test has actually been run.
 
 Tests that depend on a `PROPOSED` or `PENDING` decision must not be written before that decision is approved.
 
@@ -153,11 +153,18 @@ v0.3's R05, R06 and R10 tested the `sync`/`skim` race. That race no longer exist
 | R13 | A2: token1 in deficit and token0 with surplus → `skim()` sends token0's surplus and leaves token1 untouched | M6 | `NOT IMPLEMENTED` |
 
 | R14 | `sync()` lowers one reserve to 0 while `totalSupply > 0` (DECISIONS M4-6) | M6 | `NOT IMPLEMENTED` |
-| R15 | After R14, later deposits never fail with an unexpected division-by-zero Panic; behaviour follows the zero-reserve recovery decision (`PENDING`, M6) | M6 | `NOT IMPLEMENTED` |
-| R16 | After R14, withdrawal / recovery of the LPs' remaining assets follows a defined rule (`PENDING`, M6) | M6 | `NOT IMPLEMENTED` |
+| R15 | After R14 (terminal pool, DECISIONS M6-1): later deposits revert `InsufficientLiquidity` before any transfer, never a division-by-zero Panic; swaps and quotes revert `InsufficientLiquidity` | M6 | `NOT IMPLEMENTED` |
+| R16 | After R14, zero reserve + normal other side: `removeLiquidity` pays 0 of the zero-reserve token and the proportional amount of the other (M4-3r); LPs recover the remaining asset | M6 | `NOT IMPLEMENTED` |
 | R17 | Transitions between deficit, surplus and normal balance states (each token independently) reach the specified state | M6 | `NOT IMPLEMENTED` |
+| R18 | Terminal pool, `min_iNet > 0` on the zero-reserve side → `InsufficientNetReceived`, full rollback (slippage protection not bypassed) | M6 | `NOT IMPLEMENTED` |
+| R19 | Non-zero reserve whose `amount_i` rounds to 0 still reverts `InsufficientLiquidityBurned`, in a normal and in a terminal pool (M4-3 not loosened) | M6 | `NOT IMPLEMENTED` |
+| R20 | Both reserves 0 (`S > 0`) → `removeLiquidity` reverts `InsufficientLiquidityBurned` | M6 | `NOT IMPLEMENTED` |
+| R21 | Terminal pool with surplus in the zero-reserve token (and in the other token): withdrawal pays only reserve-based amounts; both surpluses unchanged; `skim()` still sends them | M6 | `NOT IMPLEMENTED` |
+| R22 | Last redeemable LP exits a terminal pool: Pool still holds exactly 1,000 LP; the reserves backing the lock remain (documented limitation) | M6 | `NOT IMPLEMENTED` |
 
-R08, R13 and R14–R17 need a test-only mock token whose Pool balance can be reduced.
+R11 also covers repeated calls: `sync()` / `skim()` with nothing to do emit no `ReserveSynced` / `SurplusSkimmed` and write no reserve (checked with `vm.record` / `vm.accesses`). R13 also covers deficit and surplus at the same time in either token.
+
+R08, R13 and R14–R22 need a test-only mock token whose Pool balance can be reduced (`MockDeficitERC20`, DECISIONS M6-5).
 
 ## 7. Balance invariants per call (M4–M8)
 
@@ -171,6 +178,7 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 | B04 | BI-3 | After `skim()`, every token that had surplus has `balance == reserve`; reserves unchanged | M6 | `NOT IMPLEMENTED` |
 | B05 | BI-4 | After `sync()`, `reserve_i = min(old reserve_i, balance_i)`; no reserve increased; balances unchanged | M6 | `NOT IMPLEMENTED` |
 | B06 | BI-5 | Pool balance falls by exactly the amount sent in remove, swap and skim; negative case with `MockOverDebitERC20` (moved forward from X04, DECISIONS M4-4) | M4–M6 | Remove `PASSED` (M4); swap `PASSED` (M5) — asserted in `_checkedSwap`, negative `test_B06_overDebitOutputReverts`, `test_S08_swapOutbound_caughtFaulty_overDebitRejectedByA8`; skim (M6) `NOT IMPLEMENTED` |
+| B08 | BI-2 | The first token's transfer callback directly transfers the **other** token to the Pool (add, remove, swap both directions): the donation is not counted as the caller's input and stays surplus (guards the M6-3 B snapshot reuse) | M6 | `NOT IMPLEMENTED` |
 | B07 | BI-6 | Recipient's actual increase ≥ user minimum in remove and swap; boundary at exactly the minimum | M4, M5 | Remove `PASSED` (M4); swap `PASSED` (M5) — `test_S04_minNetBoundary`, `test_M5_3_eventFieldsAreDistinct` (taxed output, min = netOut) |
 
 ## 8. LP ERC-20 and lock (M3)
@@ -216,6 +224,7 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 | X01 | Cross-function reentrancy blocked: from a swap callback into `addLiquidity` / `removeLiquidity`, from a withdrawal callback into `swapExactInput`, from a deposit callback into `swapExactInput`; bubbling and caught variants (DECISIONS M5-6) | M5 | `PASSED` (M5) — every `test_*_X01_*` in `test/AMMPoolReentrancy.t.sol` loops over the three re-entrant calls (swap, add, remove) from each callback point; `test_X01_add_caughtFaulty_shortInputRejectedByNetRange` |
 | X02 | Swap with a token that returns `false` or reverts → full rollback (all M5-6 state compared); a token that returns **no value** is accepted by `SafeERC20` and the swap succeeds, tested on the input side and on the output side (DECISIONS M5-7) | M5 | `PASSED` (M5) — `test_X02_input*`, `test_X02_output*`, `test_X02_balanceOfRevertRollsBack`, `test_X02_noReturnTokenAsInput`, `test_X02_noReturnTokenAsOutput` |
 | X03 | D10 ownerless. Static: the compiled ABI (`out/AMMPool.sol/AMMPool.json`) lists exactly the approved functions, with no `fallback` / `receive`. Runtime: admin-style selectors (owner, setter, sweep, pause), a fuzzed unknown selector and a plain ETH transfer fail with empty return data and no state change (DECISIONS M5-7) | M5 | `PASSED` (M5) — `test_X03_static_abiFunctionsEqualApprovedList`, `test_X03_static_noFallbackOrReceive`, `test_X03_runtime_adminSelectorsFail`, `test_X03_runtime_plainEthTransferFails`, `testFuzz_X03_runtime_unknownSelectorFails`. The approved list must be extended when M6 adds `sync` / `skim` |
+| X01 (M6) | `skim()` outbound callback re-entering `sync`, `skim`, add, remove, swap — bubbling, caught + correct transfer, caught + faulty transfer (A8); callbacks during add, remove and swap re-entering `sync` / `skim`; full-state rollback comparison (DECISIONS M6-5) | M6 | `NOT IMPLEMENTED` |
 | X05 | T13 demonstration: a callback mock records `getReserves()` (and LP `totalSupply`) during the inbound pull and the outbound push of a swap; the recorded values equal the pre-call snapshot and the post-effects state respectively (DECISIONS M5-5) | M5 | `PASSED` (M5) — `test_X05_midSwapInboundReadsPreCallState`, `test_X05_midSwapOutboundReadsPostEffectReserves` (Pool output balance = reserve + out mid-call), `test_X05_midRemoveReadsPostEffectState` |
 | X04 | Exclusive-FOT mock (over-debits the Pool) makes remove, swap and skim revert (A8) | M8 | `NOT IMPLEMENTED` |
 | Z01 | Fuzz swap in `[1, 2^112]`: `out < rOut`; inequality holds; no unexpected revert | M5 | Maths level `PASSED` (M2); Pool swap `PASSED` (M5) — `testFuzz_Z01_S11_S15_swapMatchesFormula` (range in §5.0) |
