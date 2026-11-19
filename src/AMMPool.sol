@@ -13,7 +13,7 @@ import {AMMMath} from "./libraries/AMMMath.sol";
 /// @dev Implemented so far: constructor checks and immutables (M2), LP ERC-20 with supply
 ///      controls and the initial deposit with the permanent 1,000-unit lock (M3), Tier 0 later
 ///      deposits and proportional withdrawal (M4), exact-input swap (M5), downward-only sync (M6).
-///      NOT production-ready: the deficit entry check (U4) is added in M6 (DECISIONS M5-1).
+///      add, remove and swap revert on a deficit (balance < reserve; U4, DECISIONS M6-2).
 ///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.4, §7.1–§7.4, §7.6, §7.9.
 contract AMMPool is ERC20, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
@@ -121,6 +121,9 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     error InvalidTokenIn();
     /// @notice The swap output rounds down to 0 (DECISIONS M2-5r; the quote returns 0 instead).
     error InsufficientOutputAmount();
+    /// @notice A token's Pool balance is below its recorded reserve (U4, DECISIONS M6-2); call
+    ///         `sync()` to reconcile before adding, removing or swapping.
+    error ReserveDeficit();
     /// @notice LP would be credited to this Pool other than by the single initial lock mint (LP-SELF).
     error LPTransferToPool();
     /// @notice LP held by this Pool (the lock) can never be moved or burned.
@@ -203,6 +206,9 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
             _mint(address(this), MINIMUM_LIQUIDITY); // permanent lock (U2, A5)
             _mint(recipient, shares);
         } else {
+            // Deficit entry check (M6-2) only here: with supply == 0 both reserves are 0, so a
+            // deficit cannot exist on the initial path.
+            _checkNoDeficit();
             // TEMPORARY (DECISIONS M4-1): still after every M3-4 check and before any transfer.
             if (tax0Bps != 0 || tax1Bps != 0) revert TaxedLaterDepositNotImplemented();
             (net0, net1, shares) = _addLater(amount0Max, amount1Max, minShares, recipient, supply);
@@ -238,6 +244,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (recipient == address(0) || recipient == address(this)) revert InvalidRecipient();
         if (shares == 0) revert ZeroAmount();
+        _checkNoDeficit(); // M6-2: before the burn, so a deficit is reported before any effect
 
         uint256 supply = totalSupply();
         _burn(msg.sender, shares); // reverts ERC20InsufficientBalance if the caller holds fewer
@@ -272,8 +279,8 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      Call order: inbound pull (must precede the reserve update, because the Pool must
     ///      measure what arrived) → effects → outbound push, so an outbound callback sees the
     ///      post-swap reserves (THREAT_MODEL T13).
-    ///      KNOWN GAP until M6: no deficit entry check, so a pre-existing deficit
-    ///      (balance < reserve) is not detected and the swap prices from stale reserves (M5-1).
+    ///      A pre-existing deficit (balance < reserve) reverts `ReserveDeficit` before the pull,
+    ///      so the swap never prices from reserves the Pool no longer holds (M6-2, closes M5-1).
     /// @param tokenIn Token sold; must be token0 or token1. An address (not a direction flag)
     ///        cannot be reversed by a caller unaware of the sort order (M5-1).
     /// @param amountIn Gross amount pulled from `msg.sender`.
@@ -293,6 +300,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         (bool zeroForOne, uint256 rIn, uint256 rOut) = _swapReserves(tokenIn);
         if (amountIn == 0) revert AMMMath.InsufficientInputAmount();
         if (rIn == 0 || rOut == 0) revert AMMMath.InsufficientLiquidity();
+        _checkNoDeficit(); // M6-2: never price from reserves the Pool no longer holds
 
         uint256 amountInNet = _pullMeasured(tokenIn, amountIn);
         uint256 amountOut = AMMMath.getAmountOut(amountInNet, rIn, rOut);
@@ -426,6 +434,14 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         reserve0 = r0 + net0;
         reserve1 = r1 + net1;
         _mint(recipient, shares);
+    }
+
+    /// @dev Deficit entry check (U4, DECISIONS M6-2): reverts if either token's Pool balance is
+    ///      below its recorded reserve. Equality passes. Only view calls, so no callback point.
+    function _checkNoDeficit() private view {
+        if (IERC20(token0).balanceOf(address(this)) < reserve0 || IERC20(token1).balanceOf(address(this)) < reserve1) {
+            revert ReserveDeficit();
+        }
     }
 
     /// @dev One token of `sync()`: if balance < reserve, lower the reserve to the balance.
