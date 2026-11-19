@@ -12,7 +12,7 @@ import {AMMMath} from "./libraries/AMMMath.sol";
 /// @notice Ownerless (D10): no admin, no setter, no privileged role. The deployer is not recorded.
 /// @dev Implemented so far: constructor checks and immutables (M2), LP ERC-20 with supply
 ///      controls and the initial deposit with the permanent 1,000-unit lock (M3), Tier 0 later
-///      deposits and proportional withdrawal (M4), exact-input swap (M5). sync/skim (M6) follow.
+///      deposits and proportional withdrawal (M4), exact-input swap (M5), downward-only sync (M6).
 ///      NOT production-ready: the deficit entry check (U4) is added in M6 (DECISIONS M5-1).
 ///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.4, §7.1–§7.4, §7.6, §7.9.
 contract AMMPool is ERC20, ReentrancyGuardTransient {
@@ -35,8 +35,8 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
 
     /// @dev Recorded reserves: the last accepted accounting state, NOT necessarily equal to
     ///      `balanceOf(this)` (ARCHITECTURE §5.1). Writers are exactly the functions listed in
-    ///      ARCHITECTURE §5.2; so far `addLiquidity` (initial and later), `removeLiquidity` and
-    ///      `swapExactInput`.
+    ///      ARCHITECTURE §5.2: `addLiquidity` (initial and later), `removeLiquidity`,
+    ///      `swapExactInput` and `sync` (lower only).
     uint256 private reserve0;
     uint256 private reserve1;
 
@@ -75,6 +75,14 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         uint256 amountOut,
         uint256 netOut
     );
+
+    /// @notice Emitted by `sync()` for each token whose recorded reserve was lowered to the actual
+    ///         balance (deficit reconciliation, DECISIONS M6-4). Not emitted when nothing changes.
+    /// @param token The token whose reserve was lowered.
+    /// @param previousReserve Recorded reserve before the call.
+    /// @param newReserve Recorded reserve after the call (= the Pool's balance); the LPs' loss is
+    ///        `previousReserve − newReserve`.
+    event ReserveSynced(address indexed token, uint256 previousReserve, uint256 newReserve);
 
     /// @notice A token address is zero.
     error ZeroAddress();
@@ -309,6 +317,26 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     }
 
     // ------------------------------------------------------------------
+    // Reserve reconciliation
+    // ------------------------------------------------------------------
+
+    /// @notice Lower each recorded reserve that exceeds the Pool's actual balance to that balance
+    ///         (deficit reconciliation; ARCHITECTURE §5.3, §7.7; DECISIONS M6-4). Callable by anyone.
+    /// @dev Gate R=(b): `sync()` may only LOWER a reserve; surplus (balance > reserve) is never
+    ///      absorbed — it belongs to `skim()` alone (BI-4). So a direct transfer followed by
+    ///      `sync()` can neither move the price nor inflate share value (THREAT_MODEL T3).
+    ///      A deficit only arises with tokens outside the supported model (ARCHITECTURE §3); the
+    ///      loss is borne by all LPs pro rata. If a reserve reaches 0 while LP supply remains, the
+    ///      Pool becomes terminal (DECISIONS M6-1, THREAT_MODEL T25).
+    ///      No transfer, so no callback point; `nonReentrant` stops it running inside another
+    ///      Pool call (e.g. from a token hook) where the reserves are mid-update.
+    ///      No change → no write and no event (U5).
+    function sync() external nonReentrant {
+        _syncToken(token0, true);
+        _syncToken(token1, false);
+    }
+
+    // ------------------------------------------------------------------
     // Views
     // ------------------------------------------------------------------
 
@@ -398,6 +426,18 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         reserve0 = r0 + net0;
         reserve1 = r1 + net1;
         _mint(recipient, shares);
+    }
+
+    /// @dev One token of `sync()`: if balance < reserve, lower the reserve to the balance.
+    /// @param isToken0 Selects `reserve0` (true) or `reserve1` (false).
+    function _syncToken(address token, bool isToken0) private {
+        uint256 reserve = isToken0 ? reserve0 : reserve1;
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance < reserve) {
+            if (isToken0) reserve0 = balance;
+            else reserve1 = balance;
+            emit ReserveSynced(token, reserve, balance);
+        }
     }
 
     /// @dev Orders the recorded reserves as (input, output) for `tokenIn`; shared by the swap and
