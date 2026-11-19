@@ -12,9 +12,10 @@ import {AMMMath} from "./libraries/AMMMath.sol";
 /// @notice Ownerless (D10): no admin, no setter, no privileged role. The deployer is not recorded.
 /// @dev Implemented so far: constructor checks and immutables (M2), LP ERC-20 with supply
 ///      controls and the initial deposit with the permanent 1,000-unit lock (M3), Tier 0 later
-///      deposits and proportional withdrawal (M4), exact-input swap (M5), downward-only sync (M6).
+///      deposits and proportional withdrawal (M4), exact-input swap (M5), downward-only sync,
+///      per-token skim, deficit entry checks and terminal-pool rules (M6).
 ///      add, remove and swap revert on a deficit (balance < reserve; U4, DECISIONS M6-2).
-///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.4, §7.1–§7.4, §7.6, §7.9.
+///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.4, §7.1–§7.9.
 contract AMMPool is ERC20, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
@@ -83,6 +84,13 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @param newReserve Recorded reserve after the call (= the Pool's balance); the LPs' loss is
     ///        `previousReserve − newReserve`.
     event ReserveSynced(address indexed token, uint256 previousReserve, uint256 newReserve);
+
+    /// @notice Emitted by `skim()` for each token whose surplus was sent to `surplusRecipient`
+    ///         (DECISIONS M6-4). Not emitted for a token without surplus.
+    /// @param token The token whose surplus was sent.
+    /// @param amount The Pool-side decrease (= balance − reserve before the call; A8). A taxed
+    ///        token's recipient receives less; its receipt is not measured.
+    event SurplusSkimmed(address indexed token, uint256 amount);
 
     /// @notice A token address is zero.
     error ZeroAddress();
@@ -354,6 +362,24 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         _syncToken(token1, false);
     }
 
+    /// @notice Send each token's surplus (balance above recorded reserve) to the immutable
+    ///         `surplusRecipient` (ARCHITECTURE §5.4, §7.8; DECISIONS M6-4). Callable by anyone;
+    ///         the caller cannot choose the destination and gains nothing.
+    /// @dev Gate R=(b): the only exit for surplus; reserves are never changed (BI-3), so the price
+    ///      and the LPs' claims are unaffected. Per token independently (A2): a token without
+    ///      surplus — equal or in deficit — is skipped, so a deficit in one token never blocks the
+    ///      other token's surplus. A8 (BI-5): the Pool's balance must fall by exactly the amount
+    ///      sent, else `OutboundTransferMismatch`. A reverting transfer reverts the whole call, so
+    ///      neither token is skimmed while one transfer keeps failing (THREAT_MODEL T15).
+    ///      No MIN-NET: a taxed token's recipient receives less (THREAT_MODEL T16).
+    ///      Effects-free before the transfer (reserves are only read), and `nonReentrant`
+    ///      blocks a token callback from re-entering any state-changing function.
+    ///      No surplus → no transfer, no write, no event (U5).
+    function skim() external nonReentrant {
+        _skimToken(token0, reserve0);
+        _skimToken(token1, reserve1);
+    }
+
     // ------------------------------------------------------------------
     // Views
     // ------------------------------------------------------------------
@@ -471,6 +497,19 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
             if (isToken0) reserve0 = balance;
             else reserve1 = balance;
             emit ReserveSynced(token, reserve, balance);
+        }
+    }
+
+    /// @dev One token of `skim()`. The balance read here is the before-snapshot of the transfer:
+    ///      nothing runs between the two, and the reserve cannot change (`nonReentrant`).
+    function _skimToken(address token, uint256 reserve) private {
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance > reserve) {
+            uint256 amount = balance - reserve;
+            IERC20(token).safeTransfer(surplusRecipient, amount);
+            uint256 balanceAfter = IERC20(token).balanceOf(address(this));
+            if (balanceAfter > balance || balance - balanceAfter != amount) revert OutboundTransferMismatch();
+            emit SurplusSkimmed(token, amount);
         }
     }
 

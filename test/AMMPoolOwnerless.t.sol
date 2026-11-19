@@ -18,7 +18,7 @@ contract AMMPoolOwnerlessTest is Test {
     MockERC20 internal t1;
     address internal alice = makeAddr("alice");
 
-    function _approved() internal pure returns (string[21] memory a) {
+    function _approved() internal pure returns (string[22] memory a) {
         a = [
             // ERC-20 (LP token, OpenZeppelin)
             "allowance(address,address)",
@@ -44,7 +44,8 @@ contract AMMPoolOwnerlessTest is Test {
             "getAmountOut(address,uint256)",
             "getReserves()",
             // reserve reconciliation (M6)
-            "sync()"
+            "sync()",
+            "skim()"
         ];
     }
 
@@ -69,7 +70,7 @@ contract AMMPoolOwnerlessTest is Test {
     function test_X03_static_abiFunctionsEqualApprovedList() public view {
         string memory json = vm.readFile("out/AMMPool.sol/AMMPool.json");
         string[] memory actual = vm.parseJsonKeys(json, ".methodIdentifiers");
-        string[21] memory approved = _approved();
+        string[22] memory approved = _approved();
         assertEq(actual.length, approved.length, "number of external functions");
         for (uint256 i; i < actual.length; ++i) {
             bool found;
@@ -154,7 +155,7 @@ contract AMMPoolOwnerlessTest is Test {
 
     /// @dev Any selector that is not an approved function reaches no code path (no fallback).
     function testFuzz_X03_runtime_unknownSelectorFails(bytes4 selector, bytes32 arg0, bytes32 arg1) public {
-        string[21] memory approved = _approved();
+        string[22] memory approved = _approved();
         for (uint256 i; i < approved.length; ++i) {
             vm.assume(selector != bytes4(keccak256(bytes(approved[i]))));
         }
