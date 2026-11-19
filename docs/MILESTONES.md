@@ -1,6 +1,6 @@
 # MILESTONES — Plan and Progress
 
-**Last updated:** 2026-11-17
+**Last updated:** 2026-11-19
 **Deadline:** 2026-11-27, 12:00 UK time
 
 Workflow rules: root `CLAUDE.md`. Status labels: [DECISIONS.md](DECISIONS.md) §0.
@@ -9,14 +9,14 @@ Workflow rules: root `CLAUDE.md`. Status labels: [DECISIONS.md](DECISIONS.md) §
 
 | Item | Status |
 |---|---|
-| Architecture documents (`docs/`, five files) | Revised after the 2026-11-17 consistency review; awaiting student review |
-| Git | M1, M2 accepted (tags `m1-setup-accepted`, `m2-pool-skeleton-accepted`, merged to `main`); M3 on `m3-lp-initial-deposit`, awaiting review |
+| Architecture documents (`docs/`, five files) | Maintained per milestone; M4 decisions recorded (DECISIONS §11) |
+| Git | M1, M2, M3 accepted (tags `m1-setup-accepted`, `m2-pool-skeleton-accepted`, `m3-lp-initial-deposit-accepted`, merged to `main`); M4 in progress on `m4-deposit-withdraw` |
 | AMM contracts | `AMMPool`: constructor checks, LP ERC-20 with `_update` supply controls, initial `addLiquidity` with 1,000 lock, `getReserves`; `AMMMath`: quote (returns 0 for zero output), initial shares |
 | Tests | 88 passing: Counter 2, MockERC20 7, AMMMath 27, AMMPool 15, AMMPoolLiquidity 37 |
 | Dependencies | forge 1.9.0, forge-std 1.17.0, OpenZeppelin Contracts v5.7.0 (all plain directories, not submodules); compiler pinned per U12 |
 | Gas measurements | None |
 
-No milestone has been accepted. Only the student accepts milestones.
+Accepted so far: M1, M2, M3. Only the student accepts milestones.
 
 ## 2. Workflow per milestone
 
@@ -37,9 +37,9 @@ Dates are targets, not commitments.
 | M1 | `chore`: pin `solc` / optimizer / `evm_version`, install OpenZeppelin v5.x + remapping. `test`: `MockERC20` (18/6 decimals) and its tests. Counter kept. No AMM logic | U12 values (approved 2026-11-17) | Actual `forge build` / `forge test` / `forge config` output; no protocol code | T01–T05 | 11/17–18 |
 | M2 | Pool skeleton: constructor and four recipient checks, immutables, reserves, `getReserves`; pure maths (swap quote, sqrt) | Signatures, error names | Maths equals reference cases; constructor checks | K01–K04, R01, S02/S14 (pure), Z06 (pure) | 11/18 |
 | M3 | LP ERC-20; initial deposit; lock in `address(this)` | LP `name`/`symbol`; LP-SELF override mechanism | Supply accounting; BI-7; lock review rules hold | L01, L02, L07, P01–P06 | 11/18 |
-| M4 | Later optimal deposit (Tier 0, full U10 signature) and proportional withdrawal with MIN-NET and A8 | Signatures, events | Ratios, fairness, minima, atomicity, dust, BI-2/5/6 | L03, L04, L06, L08, L11, L12, L14, W01–W04, W06, W08, B02, B06, B07 | 11/19 |
+| M4 | Later optimal deposit (Tier 0, full U10 signature) and proportional withdrawal with MIN-NET and A8 | Signatures, events (approved, DECISIONS §11) | Ratios, fairness, minima, atomicity, dust, BI-2/5/6, lock untouched | L03, L04, L06, L08, L11, L12, L14, L26, L27, W01–W06, W08–W11, B01 (later), B02, B06, B07, Z06 (M4 formulas), Z07 | 11/19 |
 | M5 | `swapExactInput`, `getAmountOut`, 30 bps, `ReentrancyGuard` | Signatures, events; **A9 final choice after G01** | Both directions, MIN-NET, reentrancy, exact formula, inequality, references | S01–S04, S08–S15, Q01–Q03, W07, X01–X03, B03, Z01, Z06, G01 | 11/20 |
-| M6 | Downward-only `sync()`, per-token `skim()`, deficit entry checks | Event fields | Surplus isolation, deficit rules, A2, order independence | R02–R08, R10–R13, S07, L13, B01, B04, B05 | 11/21 |
+| M6 | Downward-only `sync()`, per-token `skim()`, deficit entry checks | Event fields; **zero-reserve recovery rule** (DECISIONS M4-6) | Surplus isolation, deficit rules, A2, order independence, zero-reserve recovery | R02–R08, R10–R17, S07, L13, B01, B04, B05 | 11/21 |
 | M7 | `AMMFactory` | Shared recipient; code-existence check; Pool stores `factory` | Uniqueness, reverse lookup, isolation, full regression, size | F01–F07 | 11/21 |
 | M8 | Tier 1: U8 taxed mock, exclusive-FOT mock, L-α, taxed outputs | L-α step-3 gross rule comparison (ceiling vs. minimal necessary gross; one-unit over-delivery; cap handling) | Caps, `[T, T+1]`, wrong hints revert, net minima, A8 detection | L05, L09–L10c, L15, L16, S05, S06, W05, R09, X04, Z04, Z05 | 11/22–23 |
 | M9 | Protocol fee | — | **Not in scope** (`FUTURE-ONLY`); needs fresh approval | C01–C07 | — |
@@ -57,7 +57,7 @@ Write the matching report section during each milestone, not only in M11.
 | M1 | `chore`: compiler config and OpenZeppelin; `test`: MockERC20 and tests |
 | M2 | `feat`: maths helpers + tests; `feat`: Pool skeleton + tests |
 | M3 | `feat`: LP token, initial deposit and lock + tests |
-| M4 | `feat`: later deposit + tests; `feat`: withdrawal + tests |
+| M4 | `docs`: M4 decisions; `test`: outbound-failure mocks; `feat`: Tier 0 later deposit + tests; `feat`: `removeLiquidity` + tests; `docs`: M4 results (DECISIONS M4-9) |
 | M5 | `feat`: swap and quote + tests; `test`: reentrancy probes; `docs`: G01 result |
 | M6 | `feat`: `sync` + tests; `feat`: `skim` + tests |
 | M7 | `feat`: Factory + tests; `test`: regression fixtures |

@@ -1,8 +1,8 @@
 # ARCHITECTURE — AMM Specification (Pre-Implementation)
 
-**Last updated:** 2026-11-17
+**Last updated:** 2026-11-19
 
-**Status:** Target architecture. **No AMM contract or test exists yet.** This document is not evidence of verification and is not an audit.
+**Status:** Target architecture, partly implemented (M2–M3 accepted; M4 in progress). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
 Status labels are defined in [DECISIONS.md](DECISIONS.md) §0; DECISIONS.md is authoritative for status. Anything `PROPOSED` or `PENDING` needs student approval before implementation.
 
@@ -305,14 +305,15 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 - **Threats:** wrong hint, over-debit, attributing earlier surplus, reentrancy via token callback, dilution, first-depositor manipulation.
 - **Tests:** L01–L14, B01, P05.
 - **Staging:** M4 implements and tests Tier 0 (`tax = 0`) with the full signature (U10); Tier 1 is tested in M8.
-- **M3:** only the initial (`S == 0`) branch; `S > 0` reverts `LaterDepositNotImplemented()` until M4 (DECISIONS M3-3). Exact checks, errors and event: DECISIONS M3-4. The deficit entry check is added in M6 (with reserves 0, no deficit can exist in M3).
+- **M3:** only the initial (`S == 0`) branch; `S > 0` reverted `LaterDepositNotImplemented()` (DECISIONS M3-3). Exact checks, errors and event: DECISIONS M3-4. The deficit entry check is added in M6 (with reserves 0, no deficit can exist in M3).
+- **M4:** `S > 0` with both hints 0 follows §6.2 with `t = 0` (`g_i = T_i`); errors per DECISIONS M4-2. `S > 0` with any non-zero hint reverts `TaxedLaterDepositNotImplemented()` before any transfer until M8 (DECISIONS M4-1).
 
 ### 7.3 `removeLiquidity(shares, min0Net, min1Net, recipient, deadline) → (net0, net1)`
 
 1. `nonReentrant`.
 2. Checks: deadline; recipient (U7); `shares > 0`; no deficit.
-3. `amount_i = mulDiv(shares, r_i, S)`; require both `> 0`.
-4. Effects: `_burn(msg.sender, shares)` (reverts if balance is insufficient); `reserve_i −= amount_i`.
+3. Effects: `S := totalSupply()`; `_burn(msg.sender, shares)` (reverts `ERC20InsufficientBalance` if the caller's LP is insufficient — done before the `mulDiv` so an oversized `shares` never surfaces as an overflow Panic, DECISIONS M4-3).
+4. `amount_i = mulDiv(shares, r_i, S)`; require both `> 0` (`InsufficientLiquidityBurned`); `reserve_i −= amount_i`.
 5. Outbound interaction, per token: snapshot Pool and recipient balances → `safeTransfer(recipient, amount_i)` → require Pool decrease `== amount_i` (A8) → `net_i` = recipient increase → require `net_i ≥ min_iNet` (MIN-NET).
 6. Emit event.
 
@@ -414,6 +415,9 @@ No public one-time `initialize()`; use the parameterised constructor.
 ## 9. Events (`PROPOSED`)
 
 Typed events for: pair creation, liquidity added, liquidity removed, swap, deficit reconciled (`sync`), surplus sent (`skim`). Fields are fixed per milestone.
+
+- `LiquidityAdded(address indexed sender, address indexed recipient, uint256 net0, uint256 net1, uint256 shares)` — `APPROVED` (M3-4); used for initial and later deposits.
+- `LiquidityRemoved(address indexed sender, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1)` — `APPROVED` (M4-3); amounts are the Pool-side reserve decreases. The recipient's actual receipt is the function's return value; MIN-NET is enforced on-chain from balance snapshots, not from events.
 
 ## 10. Not in the current version
 

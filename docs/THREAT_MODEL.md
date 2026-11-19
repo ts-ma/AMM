@@ -1,6 +1,6 @@
 # THREAT MODEL — AMM Security Threat Model
 
-**Last updated:** 2026-11-17
+**Last updated:** 2026-11-19
 
 **Status:** Partially implemented. Implemented and tested so far (M2–M3): constructor checks (T11), reentrancy guard on `addLiquidity` (T1, smoke test only), measured nets on the initial deposit (T2, T5), the lock and LP-SELF supply controls (T10, T24). **All other mitigations below are unimplemented and untested.** A mitigation reduces risk; it does not mean the attack is eliminated. Passing tests is not a proof of security.
 
@@ -61,6 +61,7 @@ Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [
 | T22 | LP allowance misuse | LP ERC-20 | Standard OZ behaviour | P02 | The standard ERC-20 approve race remains |
 | T23 | Token over-debits the Pool on outbound transfer (exclusive FOT or similar) | remove, swap, skim | A8: Pool balance must fall by exactly the amount sent, else revert (BI-5) | B06, X04 | Detects this one behaviour; does not make such tokens usable |
 | T24 | User sends LP tokens to the Pool address by mistake | LP ERC-20 | LP-SELF (ii): LP transfers to the Pool revert, including zero-value transfers | P06, P09 | LP sent to other wrong addresses is still unrecoverable (standard ERC-20 behaviour) |
+| T25 | Zero-reserve state: after `sync()` lowers a reserve to 0 while `totalSupply > 0`, later deposits could hit division by zero and proportional withdrawals could revert (`amount_i == 0`), trapping the LPs' remaining other-token assets | add, remove, sync | Recovery rule `PENDING` (decided at the start of M6, DECISIONS M4-6) | R14–R17 | Unresolved until M6; arises only with tokens outside the supported model |
 
 ## 5. Excluded from the current attack surface
 
