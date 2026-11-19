@@ -12,8 +12,9 @@ import {AMMMath} from "./libraries/AMMMath.sol";
 /// @notice Ownerless (D10): no admin, no setter, no privileged role. The deployer is not recorded.
 /// @dev Implemented so far: constructor checks and immutables (M2), LP ERC-20 with supply
 ///      controls and the initial deposit with the permanent 1,000-unit lock (M3), Tier 0 later
-///      deposits and proportional withdrawal (M4). Swap (M5), sync/skim (M6) follow.
-///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.3, §7.1–§7.3, §7.6, §7.9.
+///      deposits and proportional withdrawal (M4), exact-input swap (M5). sync/skim (M6) follow.
+///      NOT production-ready: the deficit entry check (U4) is added in M6 (DECISIONS M5-1).
+///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.4, §7.1–§7.4, §7.6, §7.9.
 contract AMMPool is ERC20, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
@@ -34,7 +35,8 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
 
     /// @dev Recorded reserves: the last accepted accounting state, NOT necessarily equal to
     ///      `balanceOf(this)` (ARCHITECTURE §5.1). Writers are exactly the functions listed in
-    ///      ARCHITECTURE §5.2; so far `addLiquidity` (initial and later) and `removeLiquidity`.
+    ///      ARCHITECTURE §5.2; so far `addLiquidity` (initial and later), `removeLiquidity` and
+    ///      `swapExactInput`.
     uint256 private reserve0;
     uint256 private reserve1;
 
@@ -55,6 +57,23 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @param amount1 token1 sent by the Pool (= reserve1 decrease).
     event LiquidityRemoved(
         address indexed sender, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1
+    );
+
+    /// @notice Emitted on every successful swap (DECISIONS M5-3). The three amounts are distinct:
+    /// @param sender Account whose input tokens were pulled (`msg.sender`).
+    /// @param recipient Account that received the output tokens.
+    /// @param tokenIn Input token (token0 or token1); the output token is the other one.
+    /// @param amountIn `a`: the Pool's measured input-token increase in this call (= reserveIn increase).
+    /// @param amountOut `out`: the Pool's measured output-token decrease (= reserveOut decrease, A8).
+    /// @param netOut The recipient's measured output-token increase (MIN-NET basis; below
+    ///        `amountOut` for a taxed output token).
+    event Swap(
+        address indexed sender,
+        address indexed recipient,
+        address tokenIn,
+        uint256 amountIn,
+        uint256 amountOut,
+        uint256 netOut
     );
 
     /// @notice A token address is zero.
@@ -90,6 +109,10 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     error OutboundTransferMismatch();
     /// @notice The recipient's actual balance increase is below the caller's minimum (MIN-NET, BI-6).
     error InsufficientNetReceived();
+    /// @notice `tokenIn` is neither token0 nor token1 (DECISIONS M5-1).
+    error InvalidTokenIn();
+    /// @notice The swap output rounds down to 0 (DECISIONS M2-5r; the quote returns 0 instead).
+    error InsufficientOutputAmount();
     /// @notice LP would be credited to this Pool other than by the single initial lock mint (LP-SELF).
     error LPTransferToPool();
     /// @notice LP held by this Pool (the lock) can never be moved or burned.
@@ -226,6 +249,66 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     }
 
     // ------------------------------------------------------------------
+    // Swap
+    // ------------------------------------------------------------------
+
+    /// @notice Sell exactly `amountIn` of `tokenIn` for the other token (ARCHITECTURE §6.4, §7.4;
+    ///         DECISIONS M5-1).
+    /// @dev Check order (M5-1): deadline → recipient → tokenIn → amountIn → reserves, all before
+    ///      any transfer. Reserves are read once and cached; `nonReentrant` guarantees no other
+    ///      state-changing call can modify them while this call runs.
+    ///      Pricing uses the MEASURED input `a` and the recorded reserves only, so surplus that was
+    ///      in the Pool before the call is neither counted as input nor used for the price (BI-2).
+    ///      out = floor(a·9970·rOut / (rIn·10000 + a·9970)) < rOut (§6.4); `a == 0` reverts
+    ///      `InsufficientInputAmount` inside `AMMMath`; `out == 0` reverts here (M2-5r).
+    ///      Call order: inbound pull (must precede the reserve update, because the Pool must
+    ///      measure what arrived) → effects → outbound push, so an outbound callback sees the
+    ///      post-swap reserves (THREAT_MODEL T13).
+    ///      KNOWN GAP until M6: no deficit entry check, so a pre-existing deficit
+    ///      (balance < reserve) is not detected and the swap prices from stale reserves (M5-1).
+    /// @param tokenIn Token sold; must be token0 or token1. An address (not a direction flag)
+    ///        cannot be reversed by a caller unaware of the sort order (M5-1).
+    /// @param amountIn Gross amount pulled from `msg.sender`.
+    /// @param minNetAmountOut Smallest acceptable output increase of `recipient` (MIN-NET).
+    /// @param recipient Receiver of the output token; not address(0) or this Pool (U7).
+    /// @param deadline Last valid `block.timestamp` (inclusive).
+    /// @return netOut Measured output-token increase of `recipient`.
+    function swapExactInput(
+        address tokenIn,
+        uint256 amountIn,
+        uint256 minNetAmountOut,
+        address recipient,
+        uint256 deadline
+    ) external nonReentrant returns (uint256 netOut) {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (recipient == address(0) || recipient == address(this)) revert InvalidRecipient();
+        (bool zeroForOne, uint256 rIn, uint256 rOut) = _swapReserves(tokenIn);
+        if (amountIn == 0) revert AMMMath.InsufficientInputAmount();
+        if (rIn == 0 || rOut == 0) revert AMMMath.InsufficientLiquidity();
+
+        uint256 amountInNet = _pullMeasured(tokenIn, amountIn);
+        uint256 amountOut = AMMMath.getAmountOut(amountInNet, rIn, rOut);
+        if (amountOut == 0) revert InsufficientOutputAmount();
+
+        // Effects: the whole measured input (fee included) enters reserveIn, so the 0.3% fee
+        // stays with the LPs (§6.4). amountOut < rOut, so the subtraction cannot underflow.
+        address tokenOut;
+        if (zeroForOne) {
+            reserve0 = rIn + amountInNet;
+            reserve1 = rOut - amountOut;
+            tokenOut = token1;
+        } else {
+            reserve1 = rIn + amountInNet;
+            reserve0 = rOut - amountOut;
+            tokenOut = token0;
+        }
+
+        netOut = _pushMeasured(tokenOut, recipient, amountOut, minNetAmountOut);
+
+        emit Swap(msg.sender, recipient, tokenIn, amountInNet, amountOut, netOut);
+    }
+
+    // ------------------------------------------------------------------
     // Views
     // ------------------------------------------------------------------
 
@@ -298,6 +381,14 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         reserve0 = r0 + net0;
         reserve1 = r1 + net1;
         _mint(recipient, shares);
+    }
+
+    /// @dev Orders the recorded reserves as (input, output) for `tokenIn`; shared by the swap and
+    ///      the quote so both reject an invalid token with the same error (DECISIONS M5-2).
+    function _swapReserves(address tokenIn) private view returns (bool zeroForOne, uint256 rIn, uint256 rOut) {
+        if (tokenIn == token0) return (true, reserve0, reserve1);
+        if (tokenIn == token1) return (false, reserve1, reserve0);
+        revert InvalidTokenIn();
     }
 
     /// @dev Pulls `amount` of `token` from msg.sender and returns the Pool's measured balance
