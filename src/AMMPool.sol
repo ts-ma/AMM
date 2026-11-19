@@ -12,8 +12,8 @@ import {AMMMath} from "./libraries/AMMMath.sol";
 /// @notice Ownerless (D10): no admin, no setter, no privileged role. The deployer is not recorded.
 /// @dev Implemented so far: constructor checks and immutables (M2), LP ERC-20 with supply
 ///      controls and the initial deposit with the permanent 1,000-unit lock (M3), Tier 0 later
-///      deposits (M4). Withdrawal (M4), swap (M5), sync/skim (M6) follow.
-///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1, §6.2, §7.1, §7.2, §7.6, §7.9.
+///      deposits and proportional withdrawal (M4). Swap (M5), sync/skim (M6) follow.
+///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.3, §7.1–§7.3, §7.6, §7.9.
 contract AMMPool is ERC20, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
@@ -34,7 +34,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
 
     /// @dev Recorded reserves: the last accepted accounting state, NOT necessarily equal to
     ///      `balanceOf(this)` (ARCHITECTURE §5.1). Writers are exactly the functions listed in
-    ///      ARCHITECTURE §5.2; so far only `addLiquidity` (initial and later deposits).
+    ///      ARCHITECTURE §5.2; so far `addLiquidity` (initial and later) and `removeLiquidity`.
     uint256 private reserve0;
     uint256 private reserve1;
 
@@ -45,6 +45,17 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @param net1 Measured token1 increase of the Pool in this call.
     /// @param shares LP shares minted to `recipient` (excluding the 1,000 lock).
     event LiquidityAdded(address indexed sender, address indexed recipient, uint256 net0, uint256 net1, uint256 shares);
+
+    /// @notice Emitted on every successful withdrawal (DECISIONS M4-3).
+    /// @param sender Account whose LP shares were burned (`msg.sender`).
+    /// @param recipient Account that received the tokens.
+    /// @param shares LP shares burned.
+    /// @param amount0 token0 sent by the Pool (= reserve0 decrease). For a taxed token the
+    ///        recipient receives less; its actual receipt is the function's return value.
+    /// @param amount1 token1 sent by the Pool (= reserve1 decrease).
+    event LiquidityRemoved(
+        address indexed sender, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1
+    );
 
     /// @notice A token address is zero.
     error ZeroAddress();
@@ -73,6 +84,12 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     error InsufficientDepositAmount();
     /// @notice The measured net received is outside the tolerance [T, T + 1] (ARCHITECTURE §6.2 step 4).
     error NetAmountOutOfRange();
+    /// @notice A withdrawal's proportional amount of one token rounds down to 0 (ARCHITECTURE §6.3).
+    error InsufficientLiquidityBurned();
+    /// @notice The Pool's balance did not fall by exactly the amount sent (A8, BI-5).
+    error OutboundTransferMismatch();
+    /// @notice The recipient's actual balance increase is below the caller's minimum (MIN-NET, BI-6).
+    error InsufficientNetReceived();
     /// @notice LP would be credited to this Pool other than by the single initial lock mint (LP-SELF).
     error LPTransferToPool();
     /// @notice LP held by this Pool (the lock) can never be moved or burned.
@@ -161,6 +178,51 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         emit LiquidityAdded(msg.sender, recipient, net0, net1, shares);
     }
 
+    /// @notice Burn the caller's LP shares and receive the proportional part of both reserves
+    ///         (ARCHITECTURE §6.3, §7.3; DECISIONS M4-3).
+    /// @dev Order: checks → effects (burn, reserve decrease) → interactions (one transfer per token),
+    ///      so a recipient or token callback sees post-withdrawal state; `nonReentrant` blocks
+    ///      re-entry into every state-changing function.
+    ///      The burn comes before the `mulDiv`, so any `shares` above the caller's balance — even
+    ///      `type(uint256).max` — is reported as `ERC20InsufficientBalance`, never as an overflow
+    ///      Panic. Afterwards `shares <= supply`, so `amount_i <= r_i` cannot overflow.
+    ///      The 1,000 lock is never redeemed: only `msg.sender`'s balance is burned, and `_update`
+    ///      rejects any burn from this Pool (`LockedLiquidity`). Because the lock stays in the
+    ///      supply, `amount_i <= r_i · (S − 1000) / S < r_i`, so both reserves stay > 0.
+    ///      Rounding down favours the LPs who remain.
+    /// @param shares LP shares to burn from `msg.sender`.
+    /// @param min0Net Smallest acceptable token0 increase of `recipient` (MIN-NET).
+    /// @param min1Net Smallest acceptable token1 increase of `recipient` (MIN-NET).
+    /// @param recipient Receiver of both tokens; not address(0) or this Pool (U7).
+    /// @param deadline Last valid `block.timestamp` (inclusive).
+    /// @return net0 Measured token0 increase of `recipient`.
+    /// @return net1 Measured token1 increase of `recipient`.
+    function removeLiquidity(uint256 shares, uint256 min0Net, uint256 min1Net, address recipient, uint256 deadline)
+        external
+        nonReentrant
+        returns (uint256 net0, uint256 net1)
+    {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (recipient == address(0) || recipient == address(this)) revert InvalidRecipient();
+        if (shares == 0) revert ZeroAmount();
+
+        uint256 supply = totalSupply();
+        _burn(msg.sender, shares); // reverts ERC20InsufficientBalance if the caller holds fewer
+
+        uint256 r0 = reserve0;
+        uint256 r1 = reserve1;
+        uint256 amount0 = Math.mulDiv(shares, r0, supply);
+        uint256 amount1 = Math.mulDiv(shares, r1, supply);
+        if (amount0 == 0 || amount1 == 0) revert InsufficientLiquidityBurned();
+        reserve0 = r0 - amount0;
+        reserve1 = r1 - amount1;
+
+        net0 = _pushMeasured(token0, recipient, amount0, min0Net);
+        net1 = _pushMeasured(token1, recipient, amount1, min1Net);
+
+        emit LiquidityRemoved(msg.sender, recipient, shares, amount0, amount1);
+    }
+
     // ------------------------------------------------------------------
     // Views
     // ------------------------------------------------------------------
@@ -236,6 +298,25 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         uint256 balanceBefore = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         received = IERC20(token).balanceOf(address(this)) - balanceBefore;
+    }
+
+    /// @dev Sends `amount` of `token` to `to` and returns `to`'s measured balance increase.
+    ///      A8 / BI-5: the Pool's own balance must fall by exactly `amount` (a rise or any other
+    ///      change reverts `OutboundTransferMismatch`, never an underflow Panic).
+    ///      MIN-NET / BI-6: the recipient's actual increase (0 if its balance fell) must be at
+    ///      least `minNet`; for a U8 taxed token it is below `amount`.
+    function _pushMeasured(address token, address to, uint256 amount, uint256 minNet)
+        private
+        returns (uint256 received)
+    {
+        uint256 poolBefore = IERC20(token).balanceOf(address(this));
+        uint256 toBefore = IERC20(token).balanceOf(to);
+        IERC20(token).safeTransfer(to, amount);
+        uint256 poolAfter = IERC20(token).balanceOf(address(this));
+        if (poolAfter > poolBefore || poolBefore - poolAfter != amount) revert OutboundTransferMismatch();
+        uint256 toAfter = IERC20(token).balanceOf(to);
+        received = toAfter > toBefore ? toAfter - toBefore : 0;
+        if (received < minNet) revert InsufficientNetReceived();
     }
 
     /// @dev Single choke point for every LP balance change (DECISIONS M3-2, ADR-022).
