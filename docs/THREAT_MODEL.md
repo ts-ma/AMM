@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-19
 
-**Status:** Partially implemented. Implemented and tested so far (M2–M3): constructor checks (T11), reentrancy guard on `addLiquidity` (T1, smoke test only), measured nets on the initial deposit (T2, T5), the lock and LP-SELF supply controls (T10, T24). **All other mitigations below are unimplemented and untested.** A mitigation reduces risk; it does not mean the attack is eliminated. Passing tests is not a proof of security.
+**Status:** Partially implemented. Implemented and tested so far (M2–M4): constructor checks (T11); `nonReentrant` on `addLiquidity` and `removeLiquidity` (T1; smoke test only, attack suite in M5); measured nets on initial and later deposits (T2, T5 — later deposits Tier 0 only, non-zero hints rejected until M8); the lock and LP-SELF supply controls, incl. withdrawal (T10, T24); MIN-NET on withdrawal incl. a taxed output (T7); recipient checks on add and remove (T14); full rollback on failing/false-returning tokens in add and remove (T20); A8 on withdrawal (T23). **All other mitigations below are unimplemented and untested.** A mitigation reduces risk; it does not mean the attack is eliminated. Passing tests is not a proof of security.
 
 Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [ARCHITECTURE.md](ARCHITECTURE.md). Test IDs: [TEST_MATRIX.md](TEST_MATRIX.md).
 
@@ -80,6 +80,7 @@ No owner exists. This does not remove risk around the economically privileged `s
 3. Immutable parameters cannot be corrected; the four `surplusRecipient` checks catch only four obvious mistakes.
 4. Tier 1 covers only the U8 model; other taxed tokens may revert or behave outside the guarantees.
 5. Adaptive deposits leave small rounding dust that benefits all LPs; it is not zero.
-6. No MEV protection, no oracle, no pause.
+6. No MEV protection, no oracle, no pause. Deadlines use `block.timestamp`, which a block producer can shift by a few seconds (`forge lint` `block-timestamp`); a deadline bounds staleness, not exact timing.
 7. Arithmetic ranges are hand-derived sufficient conditions; inputs beyond them may make legitimate calls revert.
 8. A failing transfer of one token blocks `skim()` for both tokens.
+9. `LiquidityAdded` / `LiquidityRemoved` are emitted after the token calls, because the Pool must first measure balances (`forge lint` `reentrancy-events`). Both functions are `nonReentrant`, so a token callback cannot interleave another Pool event; off-chain consumers should still treat the return values and balances as authoritative.

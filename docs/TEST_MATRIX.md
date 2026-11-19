@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-19
 
-**Status:** T01–T05 (M1) and the M2 rows marked `PASSED` are implemented. Everything else is a plan, not a record of passing tests. "Maths level" means the library function was tested; the Pool function that uses it does not exist yet. Record a result and the test function name only after the test has actually been run.
+**Status:** Rows marked `PASSED` (M1–M4) are implemented and were run. Everything else is a plan, not a record of passing tests. "Maths level" means the library function was tested; the Pool function that uses it does not exist yet. Record a result and the test function name only after the test has actually been run.
 
 Tests that depend on a `PROPOSED` or `PENDING` decision must not be written before that decision is approved.
 
@@ -37,24 +37,30 @@ File: `test/MockERC20.t.sol`; mock: `test/mocks/MockERC20.sol`. Run 2026-11-17 w
 |---|---|---|---|
 | L01 | Initial: provider gets `floor(sqrt(net0 × net1)) − 1000`; Pool holds exactly 1000 LP | M3 | `PASSED` (M3) — `test_L01_initialDepositSharesAndLock` |
 | L02 | Initial reverts for zero amounts and for `sqrt(net0 × net1) ≤ 1000` | M3 | `PASSED` (M3) — `test_L02_zeroAmountsRevert`, `test_L17_*` |
-| L03 | Later deposit into a 1:2 Pool pulls only the optimal amounts | M4 | `NOT IMPLEMENTED` |
-| L04 | Several LPs get shares proportional to contributions | M4 | `NOT IMPLEMENTED` |
+| L03 | Later deposit into a 1:2 Pool pulls only the optimal amounts | M4 | `PASSED` (M4) — `test_L03_workedExampleSmallUnits`, `test_L03_token0CapBinds`, `test_L03_token1CapBinds`, `test_L03_roundingDustStaysWithLPs` |
+| L04 | Several LPs get shares proportional to contributions | M4 | `PASSED` (M4) — `test_L04_sharesProportionalToContributions`, `testFuzz_L04_L11_L12_laterDepositFairness` |
 | L05 | U8 taxed token: measured `net_i ∈ [T_i, T_i+1]`; shares from net; worked example of ARCHITECTURE §6.2 (gross 203, net 201) | M8 | `NOT IMPLEMENTED` |
-| L06 | Failed transfer / insufficient balance / insufficient allowance reverts with no state left | M4 | Initial path `PASSED` (M3, `test_L23_*`); later deposit `NOT IMPLEMENTED` (M4) |
+| L06 | Failed transfer / insufficient balance / insufficient allowance reverts with no state left | M4 | `PASSED` — initial path (M3, `test_L23_*`); later deposit (M4, `test_L06_*`, 4 tests) |
 | L07 | First depositor sets the initial price | M3 | `PASSED` (M3) — `test_L07_firstDepositorSetsPrice` (18/6 decimals) |
-| L08 | `minShares` unmet reverts; expired deadline reverts; `block.timestamp == deadline` succeeds | M4 | Initial path `PASSED` (M3, `test_L18_*`, `test_L21_deadlineBoundary`); later deposit `NOT IMPLEMENTED` (M4) |
+| L08 | `minShares` unmet reverts; expired deadline reverts; `block.timestamp == deadline` succeeds | M4 | `PASSED` — initial path (M3, `test_L18_*`, `test_L21_deadlineBoundary`); later deposit (M4, `test_L08_*`) |
 | L09 | Required gross above cap reverts | M8 | `NOT IMPLEMENTED` |
 | L10a | Tax hint higher than actual reverts | M8 | `NOT IMPLEMENTED` |
 | L10b | Tax hint lower than actual reverts | M8 | `NOT IMPLEMENTED` |
 | L10c | Tax rate changed between quote and execution reverts | M8 | `NOT IMPLEMENTED` |
-| L11 | Caller's measured debit per token ≤ its cap (unit + fuzz) | M4, M8 | `NOT IMPLEMENTED` |
-| L12 | Caller's token balances never increase during `addLiquidity` (no refund path) | M4, M8 | `NOT IMPLEMENTED` |
+| L11 | Caller's measured debit per token ≤ its cap (unit + fuzz) | M4, M8 | Tier 0 `PASSED` (M4) — `test_L03_workedExampleSmallUnits`, `testFuzz_L04_L11_L12_laterDepositFairness`; Tier 1 `NOT IMPLEMENTED` (M8) |
+| L12 | Caller's token balances never increase during `addLiquidity` (no refund path) | M4, M8 | Tier 0 `PASSED` (M4) — `testFuzz_L04_L11_L12_laterDepositFairness`; Tier 1 `NOT IMPLEMENTED` (M8) |
 | L13 | Inflation scenario: after a large direct transfer by an attacker, a later LP's shares are not rounded to zero and the transfer does not enter reserves | M6 | `NOT IMPLEMENTED` |
-| L14 | `recipient ∈ {address(0), Pool}` reverts | M4 | Initial path `PASSED` (M3, `test_L21_invalidRecipientReverts`); later deposit `NOT IMPLEMENTED` (M4) |
+| L14 | `recipient ∈ {address(0), Pool}` reverts | M4 | `PASSED` — initial path (M3, `test_L21_invalidRecipientReverts`); later deposit (M4, `test_L14_invalidRecipientRevertsOnLaterDeposit`, `test_L14_recipientReceivesSharesAndEvent`) |
 | L15 | Initial deposit with a taxed token ignores the hints and uses measured net | M8 | `NOT IMPLEMENTED` |
 | L16 | `tax_iBps ≥ 10000` reverts | M8 (initial path in M3) | Initial path `PASSED` (M3, `test_L21_L16_taxBpsBoundary`); later-deposit path `NOT IMPLEMENTED` (M8) |
-| L26 | Later deposit with a U8 taxed token and hint 0: measured `net < T` → `NetAmountOutOfRange`, full rollback (DECISIONS M4-1) | M4 | `NOT IMPLEMENTED` |
-| L27 | TEMPORARY: `S > 0` with any non-zero hint → `TaxedLaterDepositNotImplemented` before any transfer; initial path with non-zero hints unchanged. **M8 removes this test and the revert and adds the replacing tests** (DECISIONS M4-1) | M4 | `NOT IMPLEMENTED` |
+| L26 | Later deposit with a U8 taxed token and hint 0: measured `net < T` → `NetAmountOutOfRange`, full rollback (DECISIONS M4-1) | M4 | `PASSED` (M4) — `test_L26_taxedToken0WithZeroHintReverts`, `test_L26_taxedToken1WithZeroHintReverts` |
+| L27 | TEMPORARY: `S > 0` with any non-zero hint → `TaxedLaterDepositNotImplemented` before any transfer; initial path with non-zero hints unchanged. **M8 removes this test and the revert and adds the replacing tests** (DECISIONS M4-1) | M4 | `PASSED` (M4, temporary) — `test_L27_nonZeroHintOnLaterDepositRevertsBeforeAnyTransfer`, `test_L27_initialPathStillIgnoresHints` |
+
+### 3.0 M4 results (2026-11-19)
+
+Files: `test/AMMPoolDeposit.t.sol` (23), `test/AMMPoolWithdraw.t.sol` (20), `test/OutboundMocks.t.sol` (6, mock self-tests). Full suite 136/136 with default fuzz runs and with `FOUNDRY_FUZZ_RUNS=10000`; configuration per §14 (verified with `forge config`).
+
+Mutation check (temporary, reverted; script outside the repository). Later deposit, 11 mutants: 10 killed; 1 equivalent under Tier 0 (`reserve += T` instead of `+= net`: the `[T, T+1]` check with a Tier 0 token forces `net == T`; distinguishable only with Tier 1 in M8). The first run also showed the token0-side lower tolerance bound surviving, because L26 happened to tax token1 only; L26 was split into token0/token1 variants, which kill it. Withdrawal, 13 mutants, all killed: A8 removed; MIN-NET on `amount` instead of net; MIN-NET off by one; return `amount` instead of measured net; amounts rounded up; zero-amount check removed; supply read after the burn; `mulDiv` before the burn; reserve not decreased; `shares == 0` check removed; deadline `>=`; Pool-recipient check removed (caught by A8 as `OutboundTransferMismatch` too, but the exact-error test detects the wrong error); `min1Net` swapped. Not killable in M4: the **upper** `[T, T+1]` bound (needs a token that credits more than sent; covered by L10a in M8).
 
 ### 3.1 M3 initial-deposit additions (DECISIONS M3-7)
 
@@ -76,17 +82,17 @@ M3 results (2026-11-18): `test/AMMPoolLiquidity.t.sol` 37 tests passed (default 
 
 | ID | Description | Milestone | Status |
 |---|---|---|---|
-| W01 | Proportional redemption matches ARCHITECTURE §6.3 | M4 | `NOT IMPLEMENTED` |
-| W02 | Only the caller's own shares are burned; a transferee can redeem transferred LP | M4 | `NOT IMPLEMENTED` |
-| W03 | Zero shares, shares above balance, or a zero output reverts | M4 | `NOT IMPLEMENTED` |
-| W04 | MIN-NET: recipient receiving exactly `min_iNet` succeeds; one unit less reverts | M4 | `NOT IMPLEMENTED` |
-| W05 | Taxed output: minima judged on recipient's actual receipt; LP burned, reserve decrease, event `amount_i`, return `net_i` and recipient balance change all checked (DECISIONS M4-5, moved from M8) | M4 | `NOT IMPLEMENTED` |
-| W06 | After the last redeemable LP exits, the Pool still holds exactly 1000 LP and reserves > 0 | M4 | `NOT IMPLEMENTED` |
+| W01 | Proportional redemption matches ARCHITECTURE §6.3 | M4 | `PASSED` (M4) — `test_W01_proportionalRedemption`, `testFuzz_W01_redemptionMatchesFormula` |
+| W02 | Only the caller's own shares are burned; a transferee can redeem transferred LP | M4 | `PASSED` (M4) — `test_W02_onlyCallersSharesBurned` |
+| W03 | Zero shares, shares above balance, or a zero output reverts | M4 | `PASSED` (M4) — `test_W03_zeroSharesReverts`, `test_W10_classA_*`, `test_Z07_zeroOutputBoundary` |
+| W04 | MIN-NET: recipient receiving exactly `min_iNet` succeeds; one unit less reverts | M4 | `PASSED` (M4) — `test_W04_minNetBoundaryToken0`, `test_W04_minNetBoundaryToken1` |
+| W05 | Taxed output: minima judged on recipient's actual receipt; LP burned, reserve decrease, event `amount_i`, return `net_i` and recipient balance change all checked (DECISIONS M4-5, moved from M8) | M4 | `PASSED` (M4) — `test_W05_taxedToken0Output`, `test_W05_taxedToken1Output` |
+| W06 | After the last redeemable LP exits, the Pool still holds exactly 1000 LP and reserves > 0 | M4 | `PASSED` (M4) — `test_W06_lastLPExitsLockRemains` (also: a new deposit afterwards succeeds) |
 | W07 | Reentrancy during withdrawal is blocked | M5 | `NOT IMPLEMENTED` |
-| W08 | `recipient ∈ {address(0), Pool}` reverts | M4 | `NOT IMPLEMENTED` |
-| W09 | Atomicity: token1's outbound transfer fails (revert, `false`, over-debit) after token0 was sent → whole call reverts; caller LP, `totalSupply`, reserves and all token balances (incl. token0 at Pool and recipient) unchanged (DECISIONS M4-4) | M4 | `NOT IMPLEMENTED` |
-| W10 | Failure classes distinguished by exact error: insufficient LP before withdrawal (`ERC20InsufficientBalance`, incl. `shares = type(uint256).max` and `shares = S`); Pool-side anomaly after transfer (`OutboundTransferMismatch`); recipient shortfall (`InsufficientNetReceived`) (DECISIONS M4-3) | M4 | `NOT IMPLEMENTED` |
-| W11 | Lock untouched: after every successful withdrawal the Pool holds exactly 1000 LP; no withdrawal path burns Pool-held LP | M4 | `NOT IMPLEMENTED` |
+| W08 | `recipient ∈ {address(0), Pool}` reverts | M4 | `PASSED` (M4) — `test_W08_invalidRecipientReverts`, `test_W08_deadlineBoundary`, `test_W08_checkOrder` |
+| W09 | Atomicity: token1's outbound transfer fails (revert, `false`, over-debit) after token0 was sent → whole call reverts; caller LP, `totalSupply`, reserves and all token balances (incl. token0 at Pool and recipient) unchanged (DECISIONS M4-4) | M4 | `PASSED` (M4) — `test_W09_token1TransferRevertRollsBackToken0`, `test_W09_token1ReturnsFalseRollsBackToken0`, `test_W10_classB_W09_overDebitToken1RevertsAndRollsBackToken0` |
+| W10 | Failure classes distinguished by exact error: insufficient LP before withdrawal (`ERC20InsufficientBalance`, incl. `shares = type(uint256).max` and `shares = S`); Pool-side anomaly after transfer (`OutboundTransferMismatch`); recipient shortfall (`InsufficientNetReceived`) (DECISIONS M4-3) | M4 | `PASSED` (M4) — `test_W10_classA_insufficientLPBeforeWithdrawal`, `test_W10_classB_*` (2), class C in `test_W04_*`, `test_W05_*` |
+| W11 | Lock untouched: after every successful withdrawal the Pool holds exactly 1000 LP; no withdrawal path burns Pool-held LP | M4 | `PASSED` (M4) — asserted in every successful-withdrawal test; `test_W11_poolHeldLPCannotBeRedeemed` (Pool as `msg.sender` → `LockedLiquidity`) |
 
 ## 5. Swap (M5, M6, M8)
 
@@ -141,13 +147,13 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 
 | ID | Invariant | Description | Milestone | Status |
 |---|---|---|---|---|
-| B01 | BI-2 | `addLiquidity` with pre-existing surplus leaves both surpluses unchanged | M4 (surplus setup in M6) | Initial path `PASSED` (M3, `test_L20_*`); later deposit `NOT IMPLEMENTED` (M4/M6) |
-| B02 | BI-2 | `removeLiquidity` leaves both surpluses unchanged | M4 | `NOT IMPLEMENTED` |
+| B01 | BI-2 | `addLiquidity` with pre-existing surplus leaves both surpluses unchanged | M4 (surplus setup in M6) | `PASSED` — initial path (M3, `test_L20_*`); later deposit (M4, `test_B01_laterDepositLeavesSurplusUnchanged`, surplus created by direct transfer) |
+| B02 | BI-2 | `removeLiquidity` leaves both surpluses unchanged | M4 | `PASSED` (M4) — `test_B02_withdrawalLeavesSurplusUnchanged` |
 | B03 | BI-2 | `swapExactInput` leaves both surpluses unchanged | M5 | `NOT IMPLEMENTED` |
 | B04 | BI-3 | After `skim()`, every token that had surplus has `balance == reserve`; reserves unchanged | M6 | `NOT IMPLEMENTED` |
 | B05 | BI-4 | After `sync()`, `reserve_i = min(old reserve_i, balance_i)`; no reserve increased; balances unchanged | M6 | `NOT IMPLEMENTED` |
-| B06 | BI-5 | Pool balance falls by exactly the amount sent in remove, swap and skim; negative case with `MockOverDebitERC20` (moved forward from X04, DECISIONS M4-4) | M4–M6 | `NOT IMPLEMENTED` |
-| B07 | BI-6 | Recipient's actual increase ≥ user minimum in remove and swap; boundary at exactly the minimum | M4, M5 | `NOT IMPLEMENTED` |
+| B06 | BI-5 | Pool balance falls by exactly the amount sent in remove, swap and skim; negative case with `MockOverDebitERC20` (moved forward from X04, DECISIONS M4-4) | M4–M6 | Remove `PASSED` (M4) — `test_W01_proportionalRedemption`, `test_W05_*`, `test_W10_classB_*`; swap (M5), skim (M6) `NOT IMPLEMENTED` |
+| B07 | BI-6 | Recipient's actual increase ≥ user minimum in remove and swap; boundary at exactly the minimum | M4, M5 | Remove `PASSED` (M4) — `test_W04_*`, `test_W05_*`; swap `NOT IMPLEMENTED` (M5) |
 
 ## 8. LP ERC-20 and lock (M3)
 
@@ -155,7 +161,7 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 |---|---|---|---|
 | P01 | LP `transfer` moves ownership; `totalSupply` unchanged | — | `PASSED` — `test_P01_transferMovesOwnership`, `test_P01_metadata` |
 | P02 | `approve` / `transferFrom` / allowance follow the standard | — | `PASSED` — `test_P02_approveTransferFromAllowance` |
-| P03 | `totalSupply` = minted − burned, including the locked 1000 | — | `PASSED` (mint part; burn in M4) — `test_L01_initialDepositSharesAndLock`, `testFuzz_P10_*` |
+| P03 | `totalSupply` = minted − burned, including the locked 1000 | — | `PASSED` — mint (M3, `test_L01_initialDepositSharesAndLock`, `testFuzz_P10_*`); burn (M4, `test_W01_*`, `test_W06_lastLPExitsLockRemains`) |
 | P04 | No external account can mint or burn LP directly | — | `PASSED` — `test_P04_noExternalMintOrBurn` |
 | P05 | Pool's own LP balance is exactly 1000 after the first deposit and no sequence of calls changes it | — | `PASSED` (M3 operations; full sequences in M10 I1) — `test_P05_*`, `testFuzz_P10_*` |
 | P06 | LP-SELF: `transfer(pool, x)` and `transferFrom(…, pool, x)` revert `LPTransferToPool`, including `x = 0`; the initial lock mint still succeeds | — | `PASSED` — `test_P06_transferToPoolReverts`, `test_P06_transferFromToPoolReverts` |
@@ -198,8 +204,8 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 | Z03 | Mixed 6/18-decimal scales near the top of the fuzz range | M10 | `NOT IMPLEMENTED` |
 | Z04 | Fuzz gross vs. net for the U8 taxed mock | M8 | `NOT IMPLEMENTED` |
 | Z05 | Fuzz L-α: for random `T` and `t < 10000`, implementation gross gives `net ∈ [T, T+1]` | M8 | `NOT IMPLEMENTED` |
-| Z06 | **Arithmetic boundaries** for each formula in ARCHITECTURE §6.6: just inside the sufficient condition succeeds; beyond the overflow threshold reverts with the exact Panic; no wrong value returned | M5, M10 | `PASSED` for `getAmountOut` and `initialShares` (`test_Z06_*`); M4 formulas (later shares, L-α target, redemption): `NOT IMPLEMENTED` (M4); others M8/M10 |
-| Z07 | **Business-invariant boundaries** (DECISIONS M4-7): `T_i == 0`, `shares == 0`, `amount_i == 0`, `[T, T + 1]`, `minShares`, `min_iNet`, the 1,000 lock — value at the boundary succeeds or fails exactly as specified, with the exact custom error | M4 | `NOT IMPLEMENTED` |
+| Z06 | **Arithmetic boundaries** for each formula in ARCHITECTURE §6.6: just inside the sufficient condition succeeds; beyond the overflow threshold reverts with the exact Panic; no wrong value returned | M5, M10 | `PASSED` for `getAmountOut` and `initialShares` (`test_Z06_*`); M4 formulas `PASSED` (M4): L-α target `test_Z06_laterTargetOverflowBoundary` (`2^255 − 1` passes the formula, `2^255` → Panic `0x11`); redemption `test_W10_classA_*` (`type(uint256).max` → `ERC20InsufficientBalance`, no Panic). Analysed as unreachable before another check fails, so not separately testable: the other L-α branch (`T0 < amount0Max`), later-share `mulDiv` (bounded by the targets), reserve additions (bounded by token supply). Others M8/M10 |
+| Z07 | **Business-invariant boundaries** (DECISIONS M4-7): `T_i == 0`, `shares == 0`, `amount_i == 0`, `[T, T + 1]`, `minShares`, `min_iNet`, the 1,000 lock — value at the boundary succeeds or fails exactly as specified, with the exact custom error | M4 | `PASSED` (M4) — `test_Z07_targetZeroBoundary`, `test_Z07_targetZeroBoundaryToken0Side`, `test_Z07_zeroSharesReverts`, `test_Z07_zeroOutputBoundary`; `[T, T+1]` lower side `test_L26_*`; `minShares` `test_L08_*`; `min_iNet` `test_W04_*`/`test_W05_*`; lock `test_W06_*`/`test_W11_*` |
 
 Do not use `assume()` to exclude conditions the implementation is expected to handle.
 
