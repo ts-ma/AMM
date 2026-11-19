@@ -366,11 +366,11 @@ contract AMMPoolDepositTest is Test {
         _taxedZeroHintReverts(address(type(uint160).max)); // highest address: token1
     }
 
-    function _taxedZeroHintReverts(address at) internal {
-        deployCodeTo("MockTaxedERC20.sol:MockTaxedERC20", abi.encode("Taxed", "TAX", uint8(18), uint256(100)), at);
+    function _taxedZeroHintReverts(address taxedAt) internal {
+        deployCodeTo("MockTaxedERC20.sol:MockTaxedERC20", abi.encode("Taxed", "TAX", uint8(18), uint256(100)), taxedAt);
         MockERC20 plain = new MockERC20("Plain", "PLN", 18);
-        AMMPool p = _newPool(at, address(plain));
-        assertEq(at == address(0x10000) ? p.token0() : p.token1(), at, "taxed token position");
+        AMMPool p = _newPool(taxedAt, address(plain));
+        assertEq(taxedAt == address(0x10000) ? p.token0() : p.token1(), taxedAt, "taxed token position");
         _add(p, alice, 1000e18, 2000e18, 0, alice); // initial path accepts taxed tokens (M3, L19)
         Snap memory b = _snap(p, bob);
         vm.prank(bob);
