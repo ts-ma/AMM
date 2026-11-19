@@ -10,11 +10,11 @@ Workflow rules: root `CLAUDE.md`. Status labels: [DECISIONS.md](DECISIONS.md) §
 | Item | Status |
 |---|---|
 | Architecture documents (`docs/`, five files) | Maintained per milestone; M4 decisions recorded (DECISIONS §11) |
-| Git | M1, M2, M3 accepted (tags `m1-setup-accepted`, `m2-pool-skeleton-accepted`, `m3-lp-initial-deposit-accepted`, merged to `main`); M4 on `m4-deposit-withdraw`, awaiting review |
+| Git | M1, M2, M3 accepted (tags `m1-setup-accepted`, `m2-pool-skeleton-accepted`, `m3-lp-initial-deposit-accepted`, merged to `main`); M4 accepted (tag `m4-deposit-withdraw-accepted`, merged to `main`); M4 hardening on `m4-hardening`, awaiting review |
 | AMM contracts | `AMMPool`: constructor checks, LP ERC-20 with `_update` supply controls, `addLiquidity` (initial with 1,000 lock; Tier 0 later deposit; non-zero hints on later deposits temporarily rejected until M8), `removeLiquidity` with MIN-NET and A8, `getReserves`; `AMMMath`: quote (returns 0 for zero output), initial shares |
-| Tests | 136 passing: Counter 2, MockERC20 7, OutboundMocks 6, AMMMath 27, AMMPool 15, AMMPoolLiquidity 36, AMMPoolDeposit 23, AMMPoolWithdraw 20 |
+| Tests | 141 passing: Counter 2, MockERC20 7, OutboundMocks 6, AMMMath 27, AMMPool 15, AMMPoolLiquidity 36, AMMPoolDeposit 26, AMMPoolDepositDifferential 2, AMMPoolWithdraw 20 |
 | Dependencies | forge 1.9.0, forge-std 1.17.0, OpenZeppelin Contracts v5.7.0 (all plain directories, not submodules); compiler pinned per U12 |
-| Gas measurements | None |
+| Gas measurements | M4 hardening only (TEST_MATRIX §14.1: `removeLiquidity` order, L-α overflow-fix variants); full snapshot G02 in M10 |
 
 Accepted so far: M1, M2, M3. Only the student accepts milestones.
 

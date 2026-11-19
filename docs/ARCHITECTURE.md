@@ -249,7 +249,7 @@ Solidity 0.8 checked arithmetic reverts on overflow instead of wrapping, so an o
 | Later shares | `mulDiv(net_i, S, r_i)` | Reverts if the result exceeds `uint256` | `net_i × S / r_i < 2^256` |
 | Redemption | `mulDiv(shares, r_i, S)` | Result `≤ r_i` | Always within range when `shares ≤ S` |
 | L-α cap | `mulDiv(amountMax_i, t_i, D)` | Result `< amountMax_i` | Always within range |
-| L-α target | `mulDiv(cap0, r1, r0)` / `mulDiv(cap1, r0, r1)` | Reverts if result exceeds `uint256` | `cap × r_other / r_this < 2^256` |
+| L-α target | `Math.mul512(cap0, r1)`, then plain division, `mulDiv`, or the token1 branch; token1 branch likewise (DECISIONS M4H-2) | Never reverts: if `cap0 × r1 / r0 ≥ 2^256` the token1 cap necessarily binds, and the token1 branch result is `< cap0` | All inputs (verified by the Z06 differential fuzz) |
 | L-α gross | `mulDiv(T_i, D, D − t_i, Ceil)` | Reverts if result exceeds `uint256` | `T_i × D / (D − t_i) < 2^256` |
 | Reserve updates | `reserve += net`, `reserve −= amount` checked | Reverts on overflow/underflow | Under BI-1 with truthful `balanceOf`, `reserve_i ≤ balance_i`; not asserted beyond checked arithmetic |
 | §6.5 in tests | Products of two `uint256` values (`den × (rOut − out)`, `(rIn × D) × rOut`, `aFee × rOut`, `out × den`) | Computed exactly as 512-bit values by a test helper; compared as 512-bit numbers | No overflow possible in the test helper for any `uint256` inputs (DECISIONS M2-9) |
