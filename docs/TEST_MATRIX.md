@@ -313,6 +313,7 @@ If any setting changes, earlier measurements are not comparable with later ones;
 | ID | Measurement | Purpose | Milestone | Status |
 |---|---|---|---|---|
 | G01 | `swapExactInput` gas with and without the on-chain §6.5 assertion | Input to the A9 decision | M5 | Measured 2026-11-19 (§14.2); A9 decided: tests only (DECISIONS M5-9) |
+| G03 | Cost of the M6 deficit entry check; M6-3 snapshot-reuse variant B vs. A | Input to the B decision (DECISIONS M6-3) | M6 | Measured 2026-11-19 (§14.3); B decision pending |
 | G02 | Gas snapshot of all public functions | Report and later optimisation baseline | M10 | `NOT IMPLEMENTED` |
 
 ### 14.1 M4 hardening measurements (2026-11-19)
@@ -361,3 +362,28 @@ Configuration verified with `forge config` immediately before measuring: `solc` 
 **New numerical boundary?** None found. The assertion re-evaluates `rIn·D + a·9970` and `rIn·D`, which `AMMMath.getAmountOut` has already evaluated with checked arithmetic in the same call, so they cannot overflow where the swap itself did not; `rOut − out ≥ 1` (`out < rOut`); `mul512` cannot overflow. The full suite (208 tests incl. Z06 boundaries and the `[1, 2^112]` swap fuzz) passes unchanged with variant B.
 
 **What it catches:** with a deliberately injected `out + 1` bug, variant B reverts `SwapInvariantViolated()`; the existing test suite also detects the same bug (28 failing tests in the M5 mutation check), so the extra protection applies only to bugs that escape the tests and would otherwise ship in an immutable contract.
+
+### 14.3 G03 — M6 deficit check and snapshot reuse (2026-11-19, branch `m6-sync-skim`, base commit `c82608f`)
+
+Configuration verified with `forge config` immediately before measuring: `solc` 0.8.38, optimizer on, 200 runs, `evm_version = osaka`, `via_ir = false`, OpenZeppelin v5.7.0, forge 1.9.0. Variants were applied by a scratchpad script that always restored `src/` (checked byte-for-byte), together with a temporary measurement test that was removed afterwards (DECISIONS M6-3).
+
+**Scenario:** one external call per test, `gasleft()` around it, first call of the transaction (cold storage); Tier 0 tokens; Pool seeded with `(1000e18, 2000e18)`; recipient balances non-zero. Calls: later deposit with caps `(1e18, 1e19)` (token0 cap binds); withdrawal of `1e18` LP; swap of `1e18` token0 in and token1 in. Deployment measured with `gasleft()` around `new AMMPool(...)`.
+
+**Variants:** **A** (committed): `_checkNoDeficit()` reads both balances; every pull/push takes its own fresh snapshot. **N** (reference only, never adoptable): no deficit check. **B**: the first-transferred token reuses its entry reading as its before-snapshot (add: token0 pull; remove: token0 push; swap: input-token pull); the second token always re-reads.
+
+| Variant | `addLiquidity` | `removeLiquidity` | swap token0 in | swap token1 in | Runtime | Initcode | Deployment gas |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| N — no deficit check | 96,415 | 96,210 | 86,752 | 86,789 | 8,226 B | 9,284 B | 1,926,851 |
+| **A — committed** | **98,525** | **98,320** | **88,862** | **88,899** | **8,563 B** | **9,635 B** | **1,999,255** |
+| B — snapshot reuse | 97,662 | 97,438 | 88,004 | 88,040 | 9,150 B | 10,222 B | 2,126,234 |
+| A − N (cost of the check) | +2,110 | +2,110 | +2,110 | +2,110 | +337 B | +351 B | +72,404 |
+| B − A | −863 | −882 | −858 | −859 | +587 B | +587 B | +126,979 |
+
+**B against the four adoption conditions (DECISIONS M6-3):**
+
+1. B passes every test written for A: 275/275.
+2. B08 (donation of the other token during the first transfer) passes with B. Three deliberately wrong B variants that also reuse the **second** token's stale entry reading are each detected, and only by B08: add → `test_B08_addDonationDuringFirstPull`; remove → `test_B08_removeDonationDuringFirstPush`; swap → `test_B08_swapIn0DonationDuringPull`, `test_B08_swapIn1DonationDuringPull`.
+3. Gas measured separately for add, remove and both swap directions (table): about −860 gas per call (about 0.9%).
+4. Maintainability: the straightforward B (both cached balances passed on) does **not compile** (`Stack too deep` in `swapExactInput`, `removeLiquidity` and `_addLater`); the compiling version needs two duplicated helpers (`_pullFrom`, `_pushFrom`), a block scope in the swap, and an extra `_addLater` parameter that uses one of the last free stack slots before M8 adds L-α tax handling there. Runtime +587 B and deployment +126,979 gas once per Pool; break-even on runtime alone after about 148 calls per Pool.
+
+Status: measured; **B decision pending** (student). These are single-scenario measurements, not a full gas snapshot (G02, M10).
