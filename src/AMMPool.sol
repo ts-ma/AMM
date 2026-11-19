@@ -209,6 +209,9 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
             // Deficit entry check (M6-2) only here: with supply == 0 both reserves are 0, so a
             // deficit cannot exist on the initial path.
             _checkNoDeficit();
+            // Terminal pool (DECISIONS M6-1): a zero reserve can only come from sync(); refuse
+            // before any transfer instead of dividing by zero in _addLater.
+            if (reserve0 == 0 || reserve1 == 0) revert AMMMath.InsufficientLiquidity();
             // TEMPORARY (DECISIONS M4-1): still after every M3-4 check and before any transfer.
             if (tax0Bps != 0 || tax1Bps != 0) revert TaxedLaterDepositNotImplemented();
             (net0, net1, shares) = _addLater(amount0Max, amount1Max, minShares, recipient, supply);
@@ -229,6 +232,9 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      rejects any burn from this Pool (`LockedLiquidity`). Because the lock stays in the
     ///      supply, `amount_i <= r_i · (S − 1000) / S < r_i`, so both reserves stay > 0.
     ///      Rounding down favours the LPs who remain.
+    ///      Terminal pool (DECISIONS M6-1, M4-3r): if `sync()` lowered one reserve to 0, that side
+    ///      pays 0 without a transfer and the other side pays its proportional amount, so LPs can
+    ///      still recover the remaining asset; MIN-NET still applies to both sides.
     /// @param shares LP shares to burn from `msg.sender`.
     /// @param min0Net Smallest acceptable token0 increase of `recipient` (MIN-NET).
     /// @param min1Net Smallest acceptable token1 increase of `recipient` (MIN-NET).
@@ -253,12 +259,16 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         uint256 r1 = reserve1;
         uint256 amount0 = Math.mulDiv(shares, r0, supply);
         uint256 amount1 = Math.mulDiv(shares, r1, supply);
-        if (amount0 == 0 || amount1 == 0) revert InsufficientLiquidityBurned();
+        // M4-3r: rounding to 0 against a non-zero reserve still reverts, and so does a withdrawal
+        // that pays nothing at all. Only a zero reserve (terminal pool, M6-1) may pay 0.
+        if ((amount0 == 0 && amount1 == 0) || (amount0 == 0 && r0 != 0) || (amount1 == 0 && r1 != 0)) {
+            revert InsufficientLiquidityBurned();
+        }
         reserve0 = r0 - amount0;
         reserve1 = r1 - amount1;
 
-        net0 = _pushMeasured(token0, recipient, amount0, min0Net);
-        net1 = _pushMeasured(token1, recipient, amount1, min1Net);
+        net0 = amount0 == 0 ? _skipZeroSide(min0Net) : _pushMeasured(token0, recipient, amount0, min0Net);
+        net1 = amount1 == 0 ? _skipZeroSide(min1Net) : _pushMeasured(token1, recipient, amount1, min1Net);
 
         emit LiquidityRemoved(msg.sender, recipient, shares, amount0, amount1);
     }
@@ -388,7 +398,8 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      proportional value; the dust stays with all LPs (THREAT_MODEL §6 item 5).
     ///      Reserves are > 0 here: the first deposit sets both > 0 and the never-burned lock keeps
     ///      every withdrawal strictly below the reserve (ARCHITECTURE §6.3). A reserve of 0 can only
-    ///      arise from the future `sync()` — see THREAT_MODEL T25 (decided in M6).
+    ///      arise from `sync()`; `addLiquidity` rejects that terminal state before calling here
+    ///      (DECISIONS M6-1, THREAT_MODEL T25), so the divisions below never see r_i == 0.
     /// @param supply LP totalSupply before this deposit (> 0).
     function _addLater(uint256 amount0Max, uint256 amount1Max, uint256 minShares, address recipient, uint256 supply)
         private
@@ -434,6 +445,13 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         reserve0 = r0 + net0;
         reserve1 = r1 + net1;
         _mint(recipient, shares);
+    }
+
+    /// @dev Zero-reserve side of a terminal-pool withdrawal (M4-3r): nothing is sent, so the
+    ///      recipient's increase is 0 and MIN-NET is still enforced against it.
+    function _skipZeroSide(uint256 minNet) private pure returns (uint256) {
+        if (minNet != 0) revert InsufficientNetReceived();
+        return 0;
     }
 
     /// @dev Deficit entry check (U4, DECISIONS M6-2): reverts if either token's Pool balance is
