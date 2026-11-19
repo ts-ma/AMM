@@ -16,7 +16,8 @@ import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {Wide512} from "./utils/Wide512.sol";
 
 /// @notice M5: exact-input swap (ARCHITECTURE §6.4, §6.5, §7.4; DECISIONS M5-1, M5-3, M5-6, M5-7).
-///         TEST_MATRIX S01–S04, S09–S15, B03, B06 (swap), B07 (swap), X02, Z01, Z06 (swap).
+///         TEST_MATRIX S01–S04, S09–S15, B03, B06 (swap), B07 (swap), X02, Z01, Z06 (swap);
+///         quote (§7.5, DECISIONS M5-2): Q01–Q04.
 ///         Every revert asserts the exact error (DECISIONS M4-8) and every failed call is checked
 ///         for full rollback of reserves, Pool and user token balances, LP supply and LP balances,
 ///         and allowances (DECISIONS M5-6).
@@ -570,6 +571,85 @@ contract AMMPoolSwapTest is Test {
         (uint256 nIn, uint256 nOut) = _inOut(p, tokenIn);
         assertEq(nIn, rIn + a);
         assertEq(nOut, rOut - out);
+    }
+
+    // ------------------------------------------------------------------
+    // Q01–Q04 — getAmountOut (DECISIONS M5-2)
+    // ------------------------------------------------------------------
+
+    function test_Q01_quoteEqualsSwapBothDirections() public {
+        uint256 q0 = pool.getAmountOut(address(t0), 10_000);
+        assertEq(q0, 9_871);
+        assertEq(_swap(pool, address(t0), 10_000, 0), q0);
+        uint256 q1 = pool.getAmountOut(address(t1), 25_000);
+        assertEq(_swap(pool, address(t1), 25_000, 0), q1);
+    }
+
+    function testFuzz_Q01_quoteEqualsSwap(uint256 r0, uint256 r1, uint256 a, bool zeroForOne) public {
+        (AMMPool p,,) = _fuzzPool(r0, r1);
+        a = bound(a, 1, 2 ** 112);
+        address tokenIn = zeroForOne ? address(t0) : address(t1);
+        MockERC20(tokenIn).mint(bob, a);
+        uint256 q = p.getAmountOut(tokenIn, a);
+        if (q == 0) return; // zero-output inputs are Q04
+        assertEq(_swap(p, tokenIn, a, q), q, "Tier 0: quote == actual output");
+    }
+
+    /// @dev Same inputs, same error, for swap and quote: invalid token (checked before the amount),
+    ///      zero input, zero reserves.
+    function test_Q02_errorsMatchSwap() public {
+        AMMPool empty = _newPool(address(t0), address(t1));
+        bytes memory badToken = abi.encodeWithSelector(AMMPool.InvalidTokenIn.selector);
+        bytes memory zeroIn = abi.encodeWithSelector(AMMMath.InsufficientInputAmount.selector);
+        bytes memory noLiq = abi.encodeWithSelector(AMMMath.InsufficientLiquidity.selector);
+
+        vm.expectRevert(badToken);
+        pool.getAmountOut(address(0xBAD), 0);
+        _expectSwapRevert(pool, address(0xBAD), 0, 0, badToken);
+
+        vm.expectRevert(zeroIn);
+        pool.getAmountOut(address(t1), 0);
+        _expectSwapRevert(pool, address(t1), 0, 0, zeroIn);
+
+        vm.expectRevert(noLiq);
+        empty.getAmountOut(address(t0), 1);
+        _expectSwapRevert(empty, address(t0), 1, 0, noLiq);
+    }
+
+    function test_Q03_quoteIgnoresSurplus() public {
+        uint256 before = pool.getAmountOut(address(t0), 10_000);
+        vm.startPrank(bob);
+        t0.transfer(address(pool), 1e18);
+        t1.transfer(address(pool), 1e18);
+        vm.stopPrank();
+        assertEq(pool.getAmountOut(address(t0), 10_000), before, "surplus does not move the quote");
+        assertEq(pool.getAmountOut(address(t0), 10_000), 9_871);
+    }
+
+    /// @dev Reference case 3: quote 0, swap reverts with no state change.
+    function test_Q04_zeroQuoteSwapReverts() public {
+        AMMPool p = _newPool(address(t0), address(t1));
+        uint256 s = _seed(p, 2000, 2000);
+        vm.prank(alice);
+        p.removeLiquidity(s, 0, 0, alice, block.timestamp);
+        assertEq(p.getAmountOut(address(t0), 1), 0, "quote returns 0");
+        _expectSwapRevert(p, address(t0), 1, 0, abi.encodeWithSelector(AMMPool.InsufficientOutputAmount.selector));
+    }
+
+    /// @dev Class-B inputs (floored output 0, DECISIONS M2-9r): rOut ≤ rIn and
+    ///      a ≤ (rIn·D − 1) / (9970·(rOut − 1)), so a·9970·(rOut − 1) < rIn·D, i.e. out == 0.
+    ///      Range: rIn in [1001, 2^112], rOut in [⌈1001²/rIn⌉, rIn], both directions.
+    function testFuzz_Q04_zeroQuoteSwapReverts(uint256 rIn, uint256 rOut, uint256 a, bool zeroForOne) public {
+        rIn = bound(rIn, 1001, 2 ** 112);
+        rOut = bound(rOut, (1001 * 1001 + rIn - 1) / rIn, rIn);
+        uint256 aMax = rOut == 1 ? 2 ** 112 : (rIn * D - 1) / (FEE_MUL * (rOut - 1));
+        a = bound(a, 1, aMax > 2 ** 112 ? 2 ** 112 : aMax);
+        (AMMPool p,,) = zeroForOne ? _fuzzPool(rIn, rOut) : _fuzzPool(rOut, rIn);
+        address tokenIn = zeroForOne ? address(t0) : address(t1);
+        MockERC20(tokenIn).mint(bob, a);
+
+        assertEq(p.getAmountOut(tokenIn, a), 0, "class B: quote 0");
+        _expectSwapRevert(p, tokenIn, a, 0, abi.encodeWithSelector(AMMPool.InsufficientOutputAmount.selector));
     }
 
     // ------------------------------------------------------------------

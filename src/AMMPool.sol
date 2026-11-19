@@ -312,6 +312,23 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     // Views
     // ------------------------------------------------------------------
 
+    /// @notice Quote for an exact-input swap of `amountIn` of `tokenIn` (ARCHITECTURE §6.4, §7.5;
+    ///         DECISIONS M5-2).
+    /// @dev Uses recorded reserves only (surplus ignored) and treats `amountIn` as the NET input:
+    ///      for a taxed token the caller must deduct the tax itself, and the result can be stale by
+    ///      execution time. Shares `_swapReserves` with `swapExactInput`, so invalid `tokenIn`,
+    ///      zero input and zero reserves revert with the same errors as the swap
+    ///      (`InvalidTokenIn`, `InsufficientInputAmount`, `InsufficientLiquidity`).
+    ///      A floored output of 0 is RETURNED (the swap reverts instead; M2-5r, ADR-021).
+    ///      No `nonReentrantView` (DECISIONS M5-5, THREAT_MODEL T13).
+    /// @param tokenIn Token to sell; must be token0 or token1.
+    /// @param amountIn Net input amount the Pool would receive.
+    /// @return amountOut Output the Pool would send: floor(a·9970·rOut / (rIn·10000 + a·9970)).
+    function getAmountOut(address tokenIn, uint256 amountIn) external view returns (uint256 amountOut) {
+        (, uint256 rIn, uint256 rOut) = _swapReserves(tokenIn);
+        amountOut = AMMMath.getAmountOut(amountIn, rIn, rOut);
+    }
+
     /// @notice Recorded reserves (ARCHITECTURE §7.6). These are accounting values, not live
     ///         balances: tokens sent directly to the Pool do not change them.
     ///         Output names carry a trailing underscore so they do not shadow the state
