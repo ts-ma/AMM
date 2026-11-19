@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-19
 
-**Status:** Target architecture, partly implemented (M2–M5 accepted; M6 in progress). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
+**Status:** Target architecture, partly implemented (M2–M5 accepted; M6 implemented, awaiting review). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
 Status labels are defined in [DECISIONS.md](DECISIONS.md) §0; DECISIONS.md is authoritative for status. Anything `PROPOSED` or `PENDING` needs student approval before implementation.
 
@@ -72,7 +72,7 @@ For each token `i`:
 - `reserve_i` = the stored recorded reserve. Only the functions in §5.2 change it.
 - `surplus_i = balance_i − reserve_i` when positive; a *deficit* when `balance_i < reserve_i`.
 
-**Principle:** each function recognises only balance changes that happen **inside that call**, measured with before/after snapshots. Surplus that existed before the call is not attributed to the caller and stays until `skim()`.
+**Principle:** each function recognises only balance changes that happen **inside that call**, measured with before/after snapshots. Surplus that existed before the call is not attributed to the caller and stays until `skim()`. Each before-snapshot is taken immediately before its own transfer, never reused from an earlier reading (DECISIONS M6-8: about 860 gas per call kept for simpler, locally verifiable measurement).
 
 Uniswap V2's unconditional `reserve := balance` is not used: it would silently absorb surplus and could not separate a caller's contribution from earlier balances.
 
