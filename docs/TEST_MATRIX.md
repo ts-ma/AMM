@@ -92,7 +92,7 @@ M3 results (2026-11-18): `test/AMMPoolLiquidity.t.sol` 37 tests passed (default 
 | W04 | MIN-NET: recipient receiving exactly `min_iNet` succeeds; one unit less reverts | M4 | `PASSED` (M4) — `test_W04_minNetBoundaryToken0`, `test_W04_minNetBoundaryToken1` |
 | W05 | Taxed output: minima judged on recipient's actual receipt; LP burned, reserve decrease, event `amount_i`, return `net_i` and recipient balance change all checked (DECISIONS M4-5, moved from M8) | M4 | `PASSED` (M4) — `test_W05_taxedToken0Output`, `test_W05_taxedToken1Output` |
 | W06 | After the last redeemable LP exits, the Pool still holds exactly 1000 LP and reserves > 0 | M4 | `PASSED` (M4) — `test_W06_lastLPExitsLockRemains` (also: a new deposit afterwards succeeds) |
-| W07 | Reentrancy during withdrawal is blocked | M5 | `NOT IMPLEMENTED` |
+| W07 | Reentrancy during withdrawal is blocked: token callback in the outbound `transfer` re-enters `removeLiquidity`; bubbling, caught + correct transfer, caught + faulty transfer (DECISIONS M5-6) | M5 | `NOT IMPLEMENTED` |
 | W08 | `recipient ∈ {address(0), Pool}` reverts | M4 | `PASSED` (M4) — `test_W08_invalidRecipientReverts`, `test_W08_deadlineBoundary`, `test_W08_checkOrder` |
 | W09 | Atomicity: token1's outbound transfer fails (revert, `false`, over-debit) after token0 was sent → whole call reverts; caller LP, `totalSupply`, reserves and all token balances (incl. token0 at Pool and recipient) unchanged (DECISIONS M4-4) | M4 | `PASSED` (M4) — `test_W09_token1TransferRevertRollsBackToken0`, `test_W09_token1ReturnsFalseRollsBackToken0`, `test_W10_classB_W09_overDebitToken1RevertsAndRollsBackToken0` |
 | W10 | Failure classes distinguished by exact error: insufficient LP before withdrawal (`ERC20InsufficientBalance`, incl. `shares = type(uint256).max` and `shares = S`); Pool-side anomaly after transfer (`OutboundTransferMismatch`); recipient shortfall (`InsufficientNetReceived`) (DECISIONS M4-3) | M4 | `PASSED` (M4) — `test_W10_classA_insufficientLPBeforeWithdrawal`, `test_W10_classB_*` (2), class C in `test_W04_*`, `test_W05_*` |
@@ -109,11 +109,11 @@ M3 results (2026-11-18): `test/AMMPoolLiquidity.t.sol` 37 tests passed (default 
 | S05 | Taxed input: pricing and accounting use measured net | M8 | `NOT IMPLEMENTED` |
 | S06 | Taxed output: minimum judged on recipient's actual receipt (e.g. min 100, receives 99 → revert) | M8 | `NOT IMPLEMENTED` |
 | S07 | Pre-existing surplus is not counted as input and is unchanged after the swap | M6 | `NOT IMPLEMENTED` |
-| S08 | Reentrancy during swap is blocked | M5 | `NOT IMPLEMENTED` |
-| S09 | A failed swap leaves no state change | M5 | `NOT IMPLEMENTED` |
+| S08 | Reentrancy during swap is blocked: callback in the inbound `transferFrom` and in the outbound `transfer` re-enters `swapExactInput`; bubbling, caught + correct transfer, caught + faulty transfer (DECISIONS M5-6) | M5 | `NOT IMPLEMENTED` |
+| S09 | A failed swap leaves no state change: recorded reserves, Pool token balances, user token balances, LP `totalSupply` / LP balances and allowances all equal their pre-call values (DECISIONS M5-6) | M5 | `NOT IMPLEMENTED` |
 | S10 | 0-bps reference (9,900) vs. 30-bps result (9,871); the difference remains in reserves | M5 | `NOT IMPLEMENTED` |
 | S11 | Fee-adjusted inequality holds after every successful swap (unit + fuzz in `[1, 2^112]`) | M5 | `PASSED` at maths level (`AMMMath`, M2) — fuzz class A and classifier fuzz (512-bit check); per-swap: `NOT IMPLEMENTED` (M5) |
-| S12 | `recipient ∈ {address(0), Pool}` reverts; `tokenIn` outside the pair reverts | M5 | `NOT IMPLEMENTED` |
+| S12 | `recipient ∈ {address(0), Pool}` reverts `InvalidRecipient`; `tokenIn` outside the pair reverts `InvalidTokenIn`; check order of DECISIONS M5-1 | M5 | `NOT IMPLEMENTED` |
 | S13 | After several swaps, redeeming all LP returns a larger `amount0 × amount1` than deposited (fees accrue to LPs) | M5 | `NOT IMPLEMENTED` |
 | S14 | Reference cases 2, 4 and 5 (499,248; 1,992,013; 498,251,621,566,649,025) | M5 | `PASSED` at maths level (`AMMMath`, M2) — `test_S14_referenceCase2/4/5`; Pool swap: `NOT IMPLEMENTED` (M5) |
 | S15 | Implementation output equals the reference formula exactly (fuzz); `out + 1` violates the inequality for reference cases | M5 | `PASSED` at maths level (`AMMMath`, M2) — exact floor and `out + 1` tightness for reference cases and fuzz; Pool swap: `NOT IMPLEMENTED` (M5) |
@@ -179,7 +179,7 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 | ID | Description | Status |
 |---|---|---|
 | Q01 | `getAmountOut` equals the actual swap output on the same state (Tier 0) | `NOT IMPLEMENTED` |
-| Q02 | Invalid `tokenIn`, zero input, zero reserves behave as in swap | `NOT IMPLEMENTED` |
+| Q02 | Invalid `tokenIn`, zero input, zero reserves revert with the same errors as the swap (`InvalidTokenIn`, `InsufficientInputAmount`, `InsufficientLiquidity`; DECISIONS M5-2) | `NOT IMPLEMENTED` |
 | Q03 | Quote uses recorded reserves and ignores surplus | `NOT IMPLEMENTED` |
 | Q04 | Where the floored output is 0, `getAmountOut` returns 0 and `swapExactInput` with the same inputs reverts `InsufficientOutputAmount` with no state change (unit: reference case 3; fuzz over class-B inputs of §11.1) | `NOT IMPLEMENTED` |
 
@@ -199,9 +199,10 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 
 | ID | Description | Milestone | Status |
 |---|---|---|---|
-| X01 | Cross-function reentrancy (e.g. `removeLiquidity` from a swap callback) blocked | M5 | `NOT IMPLEMENTED` |
-| X02 | Tokens that return `false`, return nothing, or revert cause full rollback | M5 | `NOT IMPLEMENTED` |
-| X03 | ABI has no owner, setter, sweep or pause function | M5 | `NOT IMPLEMENTED` |
+| X01 | Cross-function reentrancy blocked: from a swap callback into `addLiquidity` / `removeLiquidity`, from a withdrawal callback into `swapExactInput`, from a deposit callback into `swapExactInput`; bubbling and caught variants (DECISIONS M5-6) | M5 | `NOT IMPLEMENTED` |
+| X02 | Swap with a token that returns `false` or reverts → full rollback (all M5-6 state compared); a token that returns **no value** is accepted by `SafeERC20` and the swap succeeds, tested on the input side and on the output side (DECISIONS M5-7) | M5 | `NOT IMPLEMENTED` |
+| X03 | D10 ownerless. Static: the compiled ABI (`out/AMMPool.sol/AMMPool.json`) lists exactly the approved functions, with no `fallback` / `receive`. Runtime: admin-style selectors (owner, setter, sweep, pause), a fuzzed unknown selector and a plain ETH transfer fail with empty return data and no state change (DECISIONS M5-7) | M5 | `NOT IMPLEMENTED` |
+| X05 | T13 demonstration: a callback mock records `getReserves()` (and LP `totalSupply`) during the inbound pull and the outbound push of a swap; the recorded values equal the pre-call snapshot and the post-effects state respectively (DECISIONS M5-5) | M5 | `NOT IMPLEMENTED` |
 | X04 | Exclusive-FOT mock (over-debits the Pool) makes remove, swap and skim revert (A8) | M8 | `NOT IMPLEMENTED` |
 | Z01 | Fuzz swap in `[1, 2^112]`: `out < rOut`; inequality holds; no unexpected revert | M5 | `PASSED` at maths level (`AMMMath`, M2) — `testFuzz_getAmountOut_A_success`; Pool swap: `NOT IMPLEMENTED` (M5) |
 | Z02 | Fuzz add then full remove: returns no more than contributed | M10 | `NOT IMPLEMENTED` |
@@ -212,6 +213,8 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 | Z07 | **Business-invariant boundaries** (DECISIONS M4-7): `T_i == 0`, `shares == 0`, `amount_i == 0`, `[T, T + 1]`, `minShares`, `min_iNet`, the 1,000 lock — value at the boundary succeeds or fails exactly as specified, with the exact custom error | M4 | `PASSED` (M4) — `test_Z07_targetZeroBoundary`, `test_Z07_targetZeroBoundaryToken0Side`, `test_Z07_zeroSharesReverts`, `test_Z07_zeroOutputBoundary`; `[T, T+1]` lower side `test_L26_*`; `minShares` `test_L08_*`; `min_iNet` `test_W04_*`/`test_W05_*`; lock `test_W06_*`/`test_W11_*` |
 
 Do not use `assume()` to exclude conditions the implementation is expected to handle.
+
+**Safety vs. supported range (DECISIONS M5-7).** A fuzz or boundary test proves only what its input range covers. Example: Z06 for `a × 9970` shows that an overflow fails safely with Panic `0x11` and never returns a wrong value; it does not show that every `uint256` input can be traded. Each fuzz/boundary row must state (a) the range over which success is asserted, (b) the inputs where a safe revert is asserted, and (c) any boundary not covered. These are recorded per test when the results are written.
 
 ### 11.1 Maths test design for `AMMMath` (M2, DECISIONS M2-9)
 

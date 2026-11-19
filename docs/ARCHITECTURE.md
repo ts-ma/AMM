@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-19
 
-**Status:** Target architecture, partly implemented (M2–M3 accepted; M4 in progress). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
+**Status:** Target architecture, partly implemented (M2–M4 accepted; M5 in progress). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
 Status labels are defined in [DECISIONS.md](DECISIONS.md) §0; DECISIONS.md is authoritative for status. Anything `PROPOSED` or `PENDING` needs student approval before implementation.
 
@@ -325,12 +325,12 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 ### 7.4 `swapExactInput(tokenIn, amountIn, minNetAmountOut, recipient, deadline) → netOut`
 
 1. `nonReentrant`.
-2. Checks: `tokenIn ∈ {token0, token1}`; deadline; recipient (U7); `amountIn > 0`; reserves nonzero; no deficit.
-3. Inbound interaction: snapshot → `safeTransferFrom(msg.sender, this, amountIn)` → snapshot → `a`; require `a > 0`.
+2. Checks, in order (DECISIONS M5-1): deadline (`DeadlineExpired`); recipient (U7, `InvalidRecipient`); `tokenIn ∈ {token0, token1}` (`InvalidTokenIn`); `amountIn > 0` (`InsufficientInputAmount`, M5-2); both recorded reserves nonzero (`InsufficientLiquidity`), read once and cached before any transfer. **No deficit check in M5**: it is added in M6 for add, remove and swap together (DECISIONS M4-6, M5-1).
+3. Inbound interaction: snapshot → `safeTransferFrom(msg.sender, this, amountIn)` → snapshot → `a`; `a == 0` reverts `InsufficientInputAmount` inside `AMMMath` (no separate Pool check).
 4. Compute `out` (§6.4); require `out > 0`, else `InsufficientOutputAmount()` (the library quote itself may be 0, DECISIONS M2-5r).
 5. Effects: `reserveIn += a`; `reserveOut −= out`.
 6. Outbound interaction: snapshot Pool and recipient balances of `tokenOut` → `safeTransfer(recipient, out)` → require Pool decrease `== out` (A8) → `netOut` = recipient increase → require `netOut ≥ minNetAmountOut` (MIN-NET).
-7. Emit event; return `netOut`.
+7. Emit `Swap` (§9); return `netOut`.
 
 - Uses the `tokenIn` address, not an index, so sorting cannot reverse the user's direction.
 - **Postconditions:** BI-2, BI-5, BI-6, BI-9.
@@ -339,6 +339,7 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 
 ### 7.5 `getAmountOut(tokenIn, amountIn) → out` (`view`)
 
+- `getAmountOut(address tokenIn, uint256 amountIn) external view returns (uint256 amountOut)` (DECISIONS M5-2). Shares the reserve-selection helper with `swapExactInput`, so invalid `tokenIn` (`InvalidTokenIn`), zero input (`InsufficientInputAmount`) and zero reserves (`InsufficientLiquidity`) revert with the same errors as the swap. No `nonReentrantView` (M5-5, THREAT_MODEL T13).
 - Returns §6.4 using recorded reserves, treating `amountIn` as the net input. For taxed tokens the caller must reduce the input and output by the tax; the result may be stale by execution time.
 - Returns **0** when the floored output is 0 (DECISIONS M2-5r); `swapExactInput` with the same inputs reverts (Q04).
 - **Tests:** Q01–Q03.
@@ -418,6 +419,7 @@ Typed events for: pair creation, liquidity added, liquidity removed, swap, defic
 
 - `LiquidityAdded(address indexed sender, address indexed recipient, uint256 net0, uint256 net1, uint256 shares)` — `APPROVED` (M3-4); used for initial and later deposits.
 - `LiquidityRemoved(address indexed sender, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1)` — `APPROVED` (M4-3); amounts are the Pool-side reserve decreases. The recipient's actual receipt is the function's return value; MIN-NET is enforced on-chain from balance snapshots, not from events.
+- `Swap(address indexed sender, address indexed recipient, address tokenIn, uint256 amountIn, uint256 amountOut, uint256 netOut)` — `APPROVED` (M5-3). Three distinct, non-interchangeable quantities: `amountIn` = `a`, the Pool's measured input increase in this call; `amountOut` = `out`, the Pool's measured output decrease (= `reserveOut` decrease, checked by A8); `netOut` = the recipient's measured output increase (MIN-NET basis; below `amountOut` for a taxed output).
 
 ## 10. Not in the current version
 
