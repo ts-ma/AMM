@@ -14,7 +14,9 @@ import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {AMMPoolSupplyHarness} from "./harness/AMMPoolSupplyHarness.sol";
 
 /// @notice M3: LP ERC-20, initial deposit and the permanent lock.
-///         TEST_MATRIX L01, L02, L07, L17–L25, P01–P10, R01 (re-run), BI-7, BI-8 (mint part).
+///         TEST_MATRIX L01, L02, L07, L17–L21, L23–L25, P01–P10, R01 (re-run), BI-7, BI-8 (mint part).
+///         (L22, the temporary later-deposit revert, was removed in M4; later deposits:
+///         test/AMMPoolDeposit.t.sol.)
 contract AMMPoolLiquidityTest is Test {
     uint256 internal constant LOCK = 1000;
     uint256 internal constant FUND = 1e30;
@@ -268,16 +270,6 @@ contract AMMPoolLiquidityTest is Test {
         pool.addLiquidity(4e18, 1e18, 0, 10_000, 0, alice, block.timestamp);
         pool.addLiquidity(4e18, 1e18, 9_999, 9_999, 0, alice, block.timestamp); // < 10000 accepted
         vm.stopPrank();
-    }
-
-    // ------------------------------------------------------------------
-    // L22 — temporary: later deposits arrive in M4
-    // ------------------------------------------------------------------
-
-    function test_L22_laterDepositRevertsUntilM4() public {
-        _add(pool, 4e18, 1e18, 0, alice);
-        vm.expectRevert(AMMPool.LaterDepositNotImplemented.selector);
-        _add(pool, 4e18, 1e18, 0, alice);
     }
 
     // ------------------------------------------------------------------
@@ -569,8 +561,11 @@ contract AMMPoolLiquidityTest is Test {
         vm.prank(alice);
         vm.expectRevert(AMMPool.LPTransferToPool.selector);
         pool.transfer(address(pool), 0);
-        vm.expectRevert(AMMPool.LaterDepositNotImplemented.selector);
-        _add(pool, a0, a1, 0, alice);
+        // (M4: L22's temporary later-deposit revert no longer exists; an expired later deposit
+        // is used as the failed supply-changing call instead.)
+        vm.prank(alice);
+        vm.expectRevert(AMMPool.DeadlineExpired.selector);
+        pool.addLiquidity(a0, a1, 0, 0, 0, alice, block.timestamp - 1);
 
         assertEq(pool.totalSupply(), supply, "BI-8: supply changes only by add/remove");
         assertEq(pool.totalSupply(), LOCK + _userLP(pool), "supply = lock + holders");
