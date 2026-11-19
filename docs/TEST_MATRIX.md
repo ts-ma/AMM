@@ -289,7 +289,7 @@ If any setting changes, earlier measurements are not comparable with later ones;
 
 | ID | Measurement | Purpose | Milestone | Status |
 |---|---|---|---|---|
-| G01 | `swapExactInput` gas with and without the on-chain §6.5 assertion | Input to the A9 decision | M5 | `NOT IMPLEMENTED` |
+| G01 | `swapExactInput` gas with and without the on-chain §6.5 assertion | Input to the A9 decision | M5 | Measured 2026-11-19 (§14.2); A9 decision `PENDING` |
 | G02 | Gas snapshot of all public functions | Report and later optimisation baseline | M10 | `NOT IMPLEMENTED` |
 
 ### 14.1 M4 hardening measurements (2026-11-19)
@@ -318,3 +318,23 @@ Configuration verified with `forge config` immediately before measuring: `solc` 
 | **V4' inline, fast division on both branches (hint check moved) — chosen** | **96,173** | **96,389** | **96,708** | 6,195 B |
 
 V4' costs +3 gas on the token0-cap branch and saves 36 gas on the token1-cap branch per call; measured deployment cost (`forge test --gas-report`, `test/AMMPool.t.sol`): V0 1,425,234 gas / 7,162 B, V4' 1,452,077 gas / 7,286 B, i.e. +26,843 gas once per Pool. Break-even on runtime alone: about 746 token1-cap deposits; never for token0-cap deposits. Chosen anyway (student, 2026-11-19, option A): deployment is paid once per Pool, per-call gas is roughly neutral, and the fix makes legitimate unbounded-cap deposits succeed instead of reverting. These are single-scenario measurements, not a full gas snapshot (that is G02, M10).
+
+### 14.2 G01 — on-chain §6.5 assertion (2026-11-19, branch `m5-swap`, base commit `e445d02`)
+
+Configuration verified with `forge config` immediately before measuring: `solc` 0.8.38, optimizer on, 200 runs, `evm_version = osaka`, `via_ir = false`, OpenZeppelin v5.7.0, forge 1.9.0. The assertion variant and a temporary measurement test were applied by a scratchpad script and removed afterwards (DECISIONS M5-4).
+
+**Variant B (measured, not adopted):** directly after the `out == 0` check, `Math.mul512(rIn·D + a·9970, rOut − out)` and `Math.mul512(rIn·D, rOut)` compared as 512-bit numbers; failure → `SwapInvariantViolated()`.
+
+**Single swap** (`gasleft()` around the external call; Pool `(1000e18, 2000e18)`, `amountIn = 1e18`, recipient balances non-zero, first swap of the transaction = cold storage):
+
+| Variant | token0 in | token1 in | second swap, same tx | Runtime size | Deployment (gas / size) |
+|---|---:|---:|---:|---:|---|
+| A — no assertion (committed) | 83,895 | 83,943 | 79,440 | 7,183 B | 1,664,720 / 8,302 B |
+| B — inline 512-bit assertion | 84,731 | 84,779 | 80,276 | 7,337 B | 1,697,993 / 8,456 B |
+| Difference | +836 | +836 | +836 | +154 B | +33,273 gas once per Pool |
+
+**`forge test --gas-report`, `AMMPoolSwapTest`** (`swapExactInput`, all calls incl. reverts): A min 22,820 / median 74,579 / max 122,795; B min 22,820 / median 75,240 / max 123,631. Max +836 matches the single-swap delta; median/mean are only indicative because the fuzz inputs differ between runs (779 vs 781 calls).
+
+**New numerical boundary?** None found. The assertion re-evaluates `rIn·D + a·9970` and `rIn·D`, which `AMMMath.getAmountOut` has already evaluated with checked arithmetic in the same call, so they cannot overflow where the swap itself did not; `rOut − out ≥ 1` (`out < rOut`); `mul512` cannot overflow. The full suite (208 tests incl. Z06 boundaries and the `[1, 2^112]` swap fuzz) passes unchanged with variant B.
+
+**What it catches:** with a deliberately injected `out + 1` bug, variant B reverts `SwapInvariantViolated()`; the existing test suite also detects the same bug (28 failing tests in the M5 mutation check), so the extra protection applies only to bugs that escape the tests and would otherwise ship in an immutable contract.

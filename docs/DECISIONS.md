@@ -168,7 +168,7 @@ In dependency order.
 | LP token `name` / `symbol` | M3 | Resolved (M3-1) |
 | `nonReentrantView` on view functions (T13) | M5 | Resolved (M5-5: not used; re-evaluation triggers in THREAT_MODEL T13) |
 | L-α gross selection: compare the current ceiling-gross formula with the minimal-necessary-gross alternative; decide whether a one-unit over-delivery is allowed and how the user cap applies (ARCHITECTURE §6.2) | Start of M8 | `PENDING` |
-| A9 final choice: on-chain swap assertion or tests only | During M5, after G01 (M5-4) | `PENDING` |
+| A9 final choice: on-chain swap assertion or tests only | During M5; G01 measured (TEST_MATRIX §14.2: +836 gas per swap, +154 B runtime, no new numerical boundary) | `PENDING` (student) |
 | Factory: one shared `surplusRecipient` for all Pools; token code-existence check; whether Pool stores `factory` | M7 | `PENDING` |
 | LP-share dust: keep floor-shares (Uniswap V2 style) or switch to shares-first with ceiling amounts (ERC-4626 `mint` style); touches D6/U9 steps 2 and 5 (DECISIONS M4H-4) | Start of M8 (student asked to be reminded) | `PENDING` |
 | Strict `[T, T + 1]` net check vs. relying on `minShares` only for unknown token tax (DECISIONS M4H-4) | Start of M8 (student asked to be reminded) | `PENDING` |
