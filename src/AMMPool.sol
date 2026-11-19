@@ -172,7 +172,9 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
             _mint(address(this), MINIMUM_LIQUIDITY); // permanent lock (U2, A5)
             _mint(recipient, shares);
         } else {
-            (net0, net1, shares) = _addLater(amount0Max, amount1Max, tax0Bps, tax1Bps, minShares, recipient, supply);
+            // TEMPORARY (DECISIONS M4-1): still after every M3-4 check and before any transfer.
+            if (tax0Bps != 0 || tax1Bps != 0) revert TaxedLaterDepositNotImplemented();
+            (net0, net1, shares) = _addLater(amount0Max, amount1Max, minShares, recipient, supply);
         }
 
         emit LiquidityAdded(msg.sender, recipient, net0, net1, shares);
@@ -242,6 +244,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     // ------------------------------------------------------------------
 
     /// @dev Later deposit, L-α (ARCHITECTURE §6.2) restricted to t = 0 until M8 (DECISIONS M4-1, M4-2).
+    ///      The caller (`addLiquidity`) has already rejected non-zero tax hints (M4-1).
     ///      With t = 0: step 1 gives cap_i = amount_iMax and step 3 gives gross g_i = T_i, so the
     ///      still-`PENDING` step-3 gross rule is not exercised. The measured net is always used
     ///      and checked against [T_i, T_i + 1] (step 4), so a taxed token passed with hint 0 reverts.
@@ -251,26 +254,32 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      every withdrawal strictly below the reserve (ARCHITECTURE §6.3). A reserve of 0 can only
     ///      arise from the future `sync()` — see THREAT_MODEL T25 (decided in M6).
     /// @param supply LP totalSupply before this deposit (> 0).
-    function _addLater(
-        uint256 amount0Max,
-        uint256 amount1Max,
-        uint256 tax0Bps,
-        uint256 tax1Bps,
-        uint256 minShares,
-        address recipient,
-        uint256 supply
-    ) private returns (uint256 net0, uint256 net1, uint256 shares) {
-        if (tax0Bps != 0 || tax1Bps != 0) revert TaxedLaterDepositNotImplemented();
-
+    function _addLater(uint256 amount0Max, uint256 amount1Max, uint256 minShares, address recipient, uint256 supply)
+        private
+        returns (uint256 net0, uint256 net1, uint256 shares)
+    {
         uint256 r0 = reserve0;
         uint256 r1 = reserve1;
 
         // Step 2: the largest pair (T0, T1) at the current ratio within both caps (floor).
+        // DECISIONS M4H-2 (chosen by gas, TEST_MATRIX §14.1 H2): form the exact 512-bit product
+        // once instead of letting `mulDiv` revert on overflow.
+        //   hi == 0      → the product fits: plain division (cheaper than `mulDiv`);
+        //   0 < hi < r0  → the quotient still fits: `mulDiv`;
+        //   hi >= r0     → amount0Max · r1 / r0 ≥ 2^256 > amount1Max, so the token1 cap binds.
+        // In the token1 branch amount1Max · r0 / r1 < amount0Max, so it can never overflow.
+        // Results equal floor(amount0Max · r1 / r0) wherever that fits in uint256.
         uint256 target0 = amount0Max;
-        uint256 target1 = Math.mulDiv(amount0Max, r1, r0);
-        if (target1 > amount1Max) {
-            target0 = Math.mulDiv(amount1Max, r0, r1);
-            target1 = amount1Max;
+        uint256 target1;
+        {
+            (uint256 hi, uint256 lo) = Math.mul512(amount0Max, r1);
+            if (hi == 0) target1 = lo / r0;
+            else if (hi < r0) target1 = Math.mulDiv(amount0Max, r1, r0);
+            if (hi >= r0 || target1 > amount1Max) {
+                (hi, lo) = Math.mul512(amount1Max, r0);
+                target0 = hi == 0 ? lo / r1 : Math.mulDiv(amount1Max, r0, r1);
+                target1 = amount1Max;
+            }
         }
         if (target0 == 0 || target1 == 0) revert InsufficientDepositAmount();
 

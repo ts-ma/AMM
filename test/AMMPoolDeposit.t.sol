@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.38;
 
-import {Test, stdError} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -476,27 +476,69 @@ contract AMMPoolDepositTest is Test {
     }
 
     // ------------------------------------------------------------------
-    // Z06 — arithmetic boundary of the L-α target mulDiv (ARCHITECTURE §6.6)
+    // Z06 / M4H-2 — the L-α target never overflows (ARCHITECTURE §6.6; DECISIONS M4H-2)
     // ------------------------------------------------------------------
 
-    /// @dev r = (1e6, 2e6): T1 = mulDiv(amount0Max, 2e6, 1e6) = 2 * amount0Max.
-    ///      amount0Max = 2^255 − 1 → T1 = 2^256 − 2 fits; the formula passes and the call fails
-    ///      later, at the pull, with the caller's insufficient balance (no Panic).
-    ///      amount0Max = 2^255 → T1 = 2^256 overflows → mulDiv Panic 0x11, before any transfer.
-    ///      The other branch (T0 = mulDiv(amount1Max, r0, r1)) runs only when T0 < amount0Max, and
-    ///      the share formula and reserve updates are bounded by the targets and the token supply,
-    ///      so they cannot overflow first (recorded in TEST_MATRIX Z06).
-    function test_Z06_laterTargetOverflowBoundary() public {
+    /// @dev r = (1e6, 2e6): exact T1 = 2 · amount0Max. Bob holds 2^255 token0, so the token0 pull
+    ///      succeeds and the token1 pull reveals which branch was taken via the needed amount:
+    ///      amount0Max = 2^255 − 1 → T1 = 2^256 − 2 fits → token0 branch → needs 2^256 − 2 token1;
+    ///      amount0Max = 2^255     → T1 = 2^256 does not fit → token1 branch (before M4H-2: Panic
+    ///      0x11) → T0 = floor(MAX / 2) = 2^255 − 1, T1 = MAX → needs MAX token1.
+    function test_Z06_laterTargetOverflowTakesToken1Branch() public {
         _add(pool, alice, 1e6, 2e6, 0, alice);
+        t0.mint(bob, 2 ** 255 - FUND);
         Snap memory b = _snap(pool, bob);
         uint256 inside = 2 ** 255 - 1;
         vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, bob, FUND, inside));
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, bob, FUND, 2 * inside));
         pool.addLiquidity(inside, type(uint256).max, 0, 0, 0, bob, block.timestamp);
 
         vm.prank(bob);
-        vm.expectRevert(stdError.arithmeticError);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, bob, FUND, type(uint256).max)
+        );
         pool.addLiquidity(inside + 1, type(uint256).max, 0, 0, 0, bob, block.timestamp);
         _assertSame(_snap(pool, bob), b);
+    }
+
+    /// @dev Regression for M4H-2: "token0 unlimited, token1 = 100e18" with r1 > r0 used to Panic.
+    ///      Now the token1 cap binds: T = (100e18 · 1000 / 2000, 100e18) = (50e18, 100e18).
+    function test_M4H2_unboundedToken0CapUsesToken1Cap() public {
+        _add(pool, alice, 1000e18, 2000e18, 0, alice);
+        uint256 s0 = pool.totalSupply();
+        (uint256 n0, uint256 n1, uint256 s) = _add(pool, bob, type(uint256).max, 100e18, 0, bob);
+        assertEq(n0, 50e18);
+        assertEq(n1, 100e18);
+        assertEq(s, s0 / 20);
+        (uint256 r0, uint256 r1) = pool.getReserves();
+        assertEq(r0, 1050e18);
+        assertEq(r1, 2100e18);
+    }
+
+    /// @dev The other unbounded combinations (both reserve orientations) give the expected targets.
+    function test_M4H2_unboundedCapsBothOrientations() public {
+        _add(pool, alice, 2000e18, 1000e18, 0, alice); // r0 > r1: no overflow on either side
+        (uint256 n0, uint256 n1,) = _add(pool, bob, type(uint256).max, 100e18, 0, bob);
+        assertEq(n0, 200e18);
+        assertEq(n1, 100e18);
+        (n0, n1,) = _add(pool, bob, 100e18, type(uint256).max, 0, bob);
+        assertEq(n0, 100e18);
+        assertEq(n1, 50e18);
+    }
+
+    /// @dev Middle path (0 < hi < r0): the product exceeds 2^256 but the quotient fits, so `mulDiv`
+    ///      is used. r = (2^100, 2^101), amount0Max = 2^200 → product 2^301, T1 = 2^201.
+    function test_M4H2_productAbove2pow256QuotientFits() public {
+        AMMPool p = _newPool(address(t0), address(t1));
+        t0.mint(alice, 2 ** 100);
+        t1.mint(alice, 2 ** 101);
+        _add(p, alice, 2 ** 100, 2 ** 101, 0, alice);
+        t0.mint(bob, 2 ** 200);
+        t1.mint(bob, 2 ** 201);
+        uint256 s0 = p.totalSupply();
+        (uint256 n0, uint256 n1, uint256 s) = _add(p, bob, 2 ** 200, type(uint256).max, 0, bob);
+        assertEq(n0, 2 ** 200);
+        assertEq(n1, 2 ** 201, "T1 = 2^200 * 2^101 / 2^100");
+        assertEq(s, s0 * 2 ** 100, "shares = net0 * S / r0");
     }
 }
