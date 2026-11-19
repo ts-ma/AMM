@@ -114,7 +114,7 @@ Uniswap V2's unconditional `reserve := balance` is not used: it would silently a
 | BI-6 | Every user minimum is met by the recipient's actual balance increase (MIN-NET). | On-chain check | B07, S04, W04 |
 | BI-7 | After the first deposit, `balanceOf(address(this)) == 1000` LP forever (0 before it). | No code path moves Pool-held LP; transfers to the Pool are rejected (LP-SELF, §7.9) | P05, P06, I1 |
 | BI-8 | LP `totalSupply` changes only in `addLiquidity` (mint) and `removeLiquidity` (burn). | Only those call `_mint` / `_burn` | P03, P04, I1 |
-| BI-9 | Every successful swap satisfies the fee-adjusted inequality (§6.5). | Formula (§6.4); on-chain assertion `PENDING` (A9) | S11, I3, Z01 |
+| BI-9 | Every successful swap satisfies the fee-adjusted inequality (§6.5). | Formula (§6.4) and tests; no on-chain assertion (A9, DECISIONS M5-9) | S11, S15, I3, Z01 |
 
 BI-7 can be stated as `== 1000` only because of LP-SELF: without it, anyone could `transfer` LP to the Pool address and those tokens would also be locked forever (§7.9).
 
@@ -234,7 +234,7 @@ For every successful swap, with pre-swap `rIn`, `rOut`:
 
 **Scope.** This holds per swap only. `removeLiquidity` and `sync()` may lower `r0 × r1`.
 
-**On-chain assertion:** the final choice follows the A9 process in M5 and is `PENDING`. Because `out` comes from the formula, the assertion is mathematically redundant; its only value would be catching an implementation bug at run time, at a gas cost to be measured.
+**On-chain assertion:** not used (A9 decided 2026-11-19, DECISIONS M5-9). Because `out` comes from the formula, the assertion is mathematically redundant; its only value would be catching an implementation bug at run time. Measured cost (G01, TEST_MATRIX §14.2): +836 gas per swap, +154 B runtime; the inequality is enforced by tests instead (S11, S15, Z01).
 
 ### 6.6 Arithmetic and input ranges (`APPROVED`, U6 / A4)
 
@@ -335,14 +335,14 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 - Uses the `tokenIn` address, not an index, so sorting cannot reverse the user's direction.
 - **Postconditions:** BI-2, BI-5, BI-6, BI-9.
 - **Threats:** quote error, taxed output, sandwich, reentrancy, balance manipulation, recipient = Pool.
-- **Tests:** S01–S15, B03, B06, B07, Q01.
+- **Tests:** S01–S04, S08–S15 (S05–S07 in M6/M8), B03, B06, B07, Q01–Q04, X01, X02, X05, Z01, Z06.
 
 ### 7.5 `getAmountOut(tokenIn, amountIn) → out` (`view`)
 
 - `getAmountOut(address tokenIn, uint256 amountIn) external view returns (uint256 amountOut)` (DECISIONS M5-2). Shares the reserve-selection helper with `swapExactInput`, so invalid `tokenIn` (`InvalidTokenIn`), zero input (`InsufficientInputAmount`) and zero reserves (`InsufficientLiquidity`) revert with the same errors as the swap. No `nonReentrantView` (M5-5, THREAT_MODEL T13).
 - Returns §6.4 using recorded reserves, treating `amountIn` as the net input. For taxed tokens the caller must reduce the input and output by the tax; the result may be stale by execution time.
 - Returns **0** when the floored output is 0 (DECISIONS M2-5r); `swapExactInput` with the same inputs reverts (Q04).
-- **Tests:** Q01–Q03.
+- **Tests:** Q01–Q04.
 
 ### 7.6 `getReserves() → (reserve0_, reserve1_)` (`view`)
 
