@@ -33,6 +33,8 @@ contract AMMFactory {
     error ZeroAddress();
     /// @notice Both token addresses are equal.
     error IdenticalTokens();
+    /// @notice A token address has no deployed code (DECISIONS M7-2).
+    error TokenHasNoCode();
     /// @notice The pair already has a Pool in this Factory (either ordering).
     error PairExists();
     /// @notice Constructor recipient is zero or the Factory itself.
@@ -52,7 +54,10 @@ contract AMMFactory {
 
     /// @notice Deploy and register the Pool for `tokenA` / `tokenB` (any order).
     /// @dev Check order (DECISIONS M7-4): zero first (so `(0, 0)` reports ZeroAddress, as M2-3),
-    ///      then identical, then sort, then uniqueness. No external call is made: the only code
+    ///      then identical, then sort, then code existence, then uniqueness.
+    ///      Code-existence check (M7-2) is a fail-fast against mistyped addresses, done only here
+    ///      (the M2 Pool constructor is unchanged). Limits: code does not prove ERC-20 compliance
+    ///      or safety, and a pair cannot be created in advance for a token not yet deployed. No external call is made: the only code
     ///      executed by `new` is the AMMPool constructor, which calls no contract, so nothing can
     ///      re-enter between the creation and the registry writes / event, and no guard is needed
     ///      (`forge lint` `reentrancy-events` counts the creation as a call; accepted, M7-4).
@@ -63,6 +68,7 @@ contract AMMFactory {
         if (tokenA == address(0) || tokenB == address(0)) revert ZeroAddress();
         if (tokenA == tokenB) revert IdenticalTokens();
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        if (token0.code.length == 0 || token1.code.length == 0) revert TokenHasNoCode();
         if (getPair[token0][token1] != address(0)) revert PairExists();
 
         pool = address(new AMMPool(token0, token1, surplusRecipient));

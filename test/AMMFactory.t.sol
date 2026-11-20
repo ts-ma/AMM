@@ -199,6 +199,84 @@ contract AMMFactoryTest is Test {
     }
 
     // ------------------------------------------------------------------
+    // F03 — token code-existence check (M7-2)
+    // ------------------------------------------------------------------
+
+    function test_F03_noCodeFirstReverts() public {
+        address eoa = makeAddr("eoa");
+        vm.expectRevert(AMMFactory.TokenHasNoCode.selector);
+        factory.createPair(eoa, address(tokenA));
+        _assertRegistryUnchanged(eoa, address(tokenA), 0);
+    }
+
+    function test_F03_noCodeSecondReverts() public {
+        address eoa = makeAddr("eoa");
+        vm.expectRevert(AMMFactory.TokenHasNoCode.selector);
+        factory.createPair(address(tokenA), eoa);
+        _assertRegistryUnchanged(address(tokenA), eoa, 0);
+    }
+
+    function test_F03_bothNoCodeReverts() public {
+        address e1 = makeAddr("eoa1");
+        address e2 = makeAddr("eoa2");
+        vm.expectRevert(AMMFactory.TokenHasNoCode.selector);
+        factory.createPair(e1, e2);
+        _assertRegistryUnchanged(e1, e2, 0);
+    }
+
+    /// @dev Precompiles have no code and are rejected like any code-less address.
+    function test_F03_precompileRejected() public {
+        vm.expectRevert(AMMFactory.TokenHasNoCode.selector);
+        factory.createPair(address(0x1), address(tokenA));
+    }
+
+    /// @dev Order: identical before code existence (an EOA paired with itself).
+    function test_F03_identicalNoCodeReportsIdentical() public {
+        address eoa = makeAddr("eoa");
+        vm.expectRevert(AMMFactory.IdenticalTokens.selector);
+        factory.createPair(eoa, eoa);
+    }
+
+    /// @dev Order: code existence before uniqueness. Test-only: the token's code is removed
+    ///      with `vm.etch` after its pair exists (not reachable on-chain for normal tokens).
+    function test_F03_noCodeCheckedBeforePairExists() public {
+        address pool = factory.createPair(address(tokenA), address(tokenB));
+        vm.etch(address(tokenA), "");
+        vm.expectRevert(AMMFactory.TokenHasNoCode.selector);
+        factory.createPair(address(tokenA), address(tokenB));
+        assertEq(factory.getPair(address(tokenA), address(tokenB)), pool);
+        assertEq(factory.allPairsLength(), 1);
+    }
+
+    /// @dev Limitation 4 of M7-2: no pair for a token that is not deployed yet, even if its
+    ///      future address is predictable; after deployment the same call succeeds.
+    function test_F03_cannotPrecreatePairForFutureToken() public {
+        TokenDeployer deployer = new TokenDeployer();
+        address future = vm.computeCreateAddress(address(deployer), 1); // a contract's first CREATE
+        vm.expectRevert(AMMFactory.TokenHasNoCode.selector);
+        factory.createPair(future, address(tokenA));
+
+        address deployed = deployer.deploy();
+        assertEq(deployed, future, "predicted address");
+        address pool = factory.createPair(future, address(tokenA));
+        assertEq(factory.getPair(future, address(tokenA)), pool);
+    }
+
+    /// @dev Limitation 3 of M7-2: code existence is not ERC-20 compliance. A contract without
+    ///      any ERC-20 function is accepted; its Pool is unusable (deposit reverts at the first
+    ///      balance read, with empty data from the failed decoding).
+    function test_F03_codeIsNotErc20Compliance() public {
+        address notToken = address(new NotAToken());
+        address pool = factory.createPair(notToken, address(tokenA));
+        assertTrue(pool != address(0), "accepted by the Factory");
+
+        tokenA.mint(address(this), 1e18);
+        tokenA.approve(pool, type(uint256).max);
+        vm.expectRevert(bytes(""));
+        AMMPool(pool).addLiquidity(1e18, 1e18, 0, 0, 0, address(this), block.timestamp);
+    }
+
+    // ------------------------------------------------------------------
     // F05 — every Pool receives the shared recipient (M7-1)
     // ------------------------------------------------------------------
 
@@ -221,5 +299,19 @@ contract AMMFactoryTest is Test {
 
         address pool = f.createPair(address(tokenB), address(tokenC)); // pairs without tokenA work
         assertEq(AMMPool(pool).surplusRecipient(), address(tokenA));
+    }
+}
+
+/// @dev A contract with code but no ERC-20 interface (test-only, M7-2 limitation 3).
+contract NotAToken {
+    function ping() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+/// @dev Deploys a MockERC20 from a fresh contract, so its address is predictable (nonce 1).
+contract TokenDeployer {
+    function deploy() external returns (address) {
+        return address(new MockERC20("Later", "LTR", 18));
     }
 }
