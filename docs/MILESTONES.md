@@ -1,6 +1,6 @@
 # MILESTONES — Plan and Progress
 
-**Last updated:** 2026-11-19
+**Last updated:** 2026-11-20
 **Deadline:** 2026-11-27, 12:00 UK time
 
 Workflow rules: root `CLAUDE.md`. Status labels: [DECISIONS.md](DECISIONS.md) §0.
@@ -9,7 +9,7 @@ Workflow rules: root `CLAUDE.md`. Status labels: [DECISIONS.md](DECISIONS.md) §
 
 | Item | Status |
 |---|---|
-| Architecture documents (`docs/`, five files) | Maintained per milestone; M6 decisions and results recorded (DECISIONS §13); next: M7 decisions |
+| Architecture documents (`docs/`, five files) | Maintained per milestone; M6 decisions and results recorded (DECISIONS §13); M7 decisions approved 2026-11-20 (DECISIONS §14); M7 in progress on branch `m7-factory` |
 | Git | M1, M2, M3 accepted (tags `m1-setup-accepted`, `m2-pool-skeleton-accepted`, `m3-lp-initial-deposit-accepted`, merged to `main`); M4 accepted (tag `m4-deposit-withdraw-accepted`, merged to `main`); M4 hardening accepted (tag `m4-hardening-accepted` on `d355fec`, merged to `main`); M5 accepted (tag `m5-swap-accepted` on `deb66ba`, merged to `main`); M6 accepted (tag `m6-sync-skim-accepted` on the M6 acceptance docs commit, merged to `main`) |
 | AMM contracts | `AMMPool`: constructor checks, LP ERC-20 with `_update` supply controls, `addLiquidity` (initial with 1,000 lock; Tier 0 later deposit; non-zero hints on later deposits temporarily rejected until M8), `removeLiquidity` with MIN-NET and A8 (terminal-pool rule M4-3r), `swapExactInput` (measured input, A8, MIN-NET), deficit entry check `ReserveDeficit` on add/remove/swap, downward-only `sync`, per-token `skim` with A8, terminal-pool rules, `getAmountOut`, `getReserves`; `AMMMath`: quote (returns 0 for zero output), initial shares |
 | Tests | 275 passing: Counter 2, MockERC20 7, OutboundMocks 6, SwapMocks 8, DeficitMock 4, AMMMath 27, AMMPool 15, AMMPoolLiquidity 36, AMMPoolDeposit 26, AMMPoolDepositDifferential 2, AMMPoolWithdraw 20, AMMPoolSwap 37, AMMPoolReentrancy 17, AMMPoolOwnerless 5, AMMPoolSync 8, AMMPoolDeficit 12, AMMPoolTerminal 14, AMMPoolSkim 14, AMMPoolSyncSkimScenarios 5, AMMPoolSyncSkimReentrancy 10 |
@@ -40,7 +40,7 @@ Dates are targets, not commitments.
 | M4 | Later optimal deposit (Tier 0, full U10 signature) and proportional withdrawal with MIN-NET and A8 | Signatures, events (approved, DECISIONS §11) | Ratios, fairness, minima, atomicity, dust, BI-2/5/6, lock untouched | L03, L04, L06, L08, L11, L12, L14, L26, L27, W01–W06, W08–W11, B01 (later), B02, B06, B07, Z06 (M4 formulas), Z07 | 11/19 |
 | M5 | `swapExactInput`, `getAmountOut`, 30 bps, `ReentrancyGuard` | Signatures, events; **A9 final choice after G01** | Both directions, MIN-NET, reentrancy, exact formula, inequality, references | S01–S04, S08–S15, Q01–Q03, W07, X01–X03, B03, Z01, Z06, G01 | 11/20 |
 | M6 | Downward-only `sync()`, per-token `skim()`, deficit entry checks, terminal-pool rules | Approved (DECISIONS §13; zero-reserve rule = M6-1 option A); B snapshot reuse decided after the benchmark (M6-3) | Surplus isolation, deficit rules, A2, order independence, zero-reserve recovery, mutation check (M6-6) | R02–R08, R10–R22, S07, L13, B01, B04–B06, B08, X01 (M6 extension), X03 | 11/21 |
-| M7 | `AMMFactory` | Shared recipient; code-existence check; Pool stores `factory` | Uniqueness, reverse lookup, isolation, full regression, size | F01–F07 | 11/21 |
+| M7 | `AMMFactory` | Approved (DECISIONS §14): shared immutable recipient (M7-1), code check in the Factory only (M7-2), Pool does not store `factory` (M7-3), terminal pairs blocked and disclosed (M7-5) | Uniqueness, reverse lookup, isolation, Factory integration + codehash equivalence (M7-6), size, ownerless ABI, mutation check (TEST_MATRIX §15), G04 | F01–F07, F04b, X03-F, G04 | 11/21 |
 | M8 | Tier 1: U8 taxed mock, exclusive-FOT mock, L-α, taxed outputs | L-α step-3 gross rule comparison (ceiling vs. minimal necessary gross; one-unit over-delivery; cap handling) | Caps, `[T, T+1]`, wrong hints revert, net minima, A8 detection | L05, L09–L10c, L15, L16, S05, S06, W05, R09, X04, Z04, Z05 | 11/22–23 |
 | M9 | Protocol fee | — | **Not in scope** (`FUTURE-ONLY`); needs fresh approval | C01–C07 | — |
 | M10 | Fuzz, stateful invariants, static review, whole-contract gas profiling after M8 on the final code (DECISIONS §6) | — | Actual results; open limitations; reproducible gas data | I1–I9, Z02, Z03, Z06, G02 | 11/24 |
@@ -60,7 +60,7 @@ Write the matching report section during each milestone, not only in M11.
 | M4 | `docs`: M4 decisions; `test`: outbound-failure mocks; `feat`: Tier 0 later deposit + tests; `feat`: `removeLiquidity` + tests; `docs`: M4 results (DECISIONS M4-9) |
 | M5 | `docs`: M5 decisions; `test`: reentrancy / no-return mocks; `feat`: `swapExactInput` + tests; `feat`: `getAmountOut` + tests; `test`: reentrancy suite and ownerless ABI checks; `docs`: G01 result (then A9 decision); `docs`: M5 results (DECISIONS M5-8) |
 | M6 | `docs`: M6 decisions; `test`: `MockDeficitERC20`; `feat`: `sync` + tests; `feat`: deficit entry check + tests; `feat`: terminal-pool rules + tests; `feat`: `skim` + tests; `test`: cross-state / reentrancy scenarios; `docs`: gas and B benchmark (then B decision); `docs`: M6 results (DECISIONS M6-7) |
-| M7 | `feat`: Factory + tests; `test`: regression fixtures |
+| M7 | `docs`: M7 decisions; `feat`: `AMMFactory` + F01–F03, F05; `feat`: token code-existence check + tests; `test`: Factory ownerless ABI (X03-F); `test`: Factory integration and codehash equivalence (F06); `test`: isolation and terminal-pair scenarios (F04, F04b); `docs`: F07, G04, mutation results, M7 results (DECISIONS M7-8) |
 | M8 | `test`: taxed and exclusive-FOT mocks; `feat`: L-α + tests; `feat`: taxed-output handling + tests |
 | M10 | `test`: fuzz / invariants; `docs`: gas data |
 | Every milestone | `docs`: keep `docs/` current |

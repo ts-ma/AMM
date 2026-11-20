@@ -1,6 +1,6 @@
 # TEST MATRIX — Foundry Test Plan
 
-**Last updated:** 2026-11-19
+**Last updated:** 2026-11-20
 
 **Status:** Rows marked `PASSED` (M1–M6) are implemented and were run. Everything else is a plan, not a record of passing tests. "Maths level" means the library function was tested; the Pool function that uses it does not exist yet. Record a result and the test function name only after the test has actually been run.
 
@@ -227,13 +227,19 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 
 | ID | Description | Status |
 |---|---|---|
-| F01 | Unique pair created; event emitted; `allPairs` grows | `NOT IMPLEMENTED` |
-| F02 | `getPair(A,B) == getPair(B,A)` | `NOT IMPLEMENTED` |
-| F03 | Identical, zero and duplicate pairs revert | `NOT IMPLEMENTED` |
-| F04 | Two Pools have independent reserves and LP | `NOT IMPLEMENTED` |
-| F05 | Pool's `surplusRecipient` matches the value the Factory passed (per the M7 decision) | `NOT IMPLEMENTED` |
-| F06 | M2–M6 tests pass with Pools deployed by the Factory | `NOT IMPLEMENTED` |
-| F07 | `forge build --sizes`: runtime size below 24,576 bytes for both contracts | `NOT IMPLEMENTED` |
+Decisions: DECISIONS §14 (M7-1 to M7-8). Every revert asserts the exact error (M4-8) and that the registry (`getPair` both orders, `allPairsLength`) is unchanged.
+
+| ID | Description | Status |
+|---|---|---|
+| F01 | Unique pair created: returned address equals `getPair`; `allPairs[n] == pool`; `allPairsLength` grows by 1; `PairCreated(token0, token1, pool, pairCount)` with sorted tokens, for both argument orders | `NOT IMPLEMENTED` |
+| F02 | `getPair(A,B) == getPair(B,A)`; unknown pair returns 0 | `NOT IMPLEMENTED` |
+| F03 | `ZeroAddress` (zero in either position, and `(0, 0)`), `IdenticalTokens`, `TokenHasNoCode` (EOA in either position; M7-2), `PairExists` (same and reverse order); check order as M7-4 | `NOT IMPLEMENTED` |
+| F04 | Two Pools sharing a token, `(A,B)` and `(A,C)`: reserves, LP balances and supply independent; donation / `sync` / `skim` in one leave the other unchanged; both skim to the shared recipient | `NOT IMPLEMENTED` |
+| F04b | A pair whose Pool is terminal (M6-1) cannot be re-created: `createPair` reverts `PairExists` in both orders (M7-5) | `NOT IMPLEMENTED` |
+| F05 | Every Pool's `surplusRecipient` equals the Factory's; Factory constructor rejects `address(0)` and the Factory itself (`InvalidSurplusRecipient`); a recipient equal to a token makes `createPair` for that token revert `InvalidSurplusRecipient` (M7-1) | `NOT IMPLEMENTED` |
+| F06 | Factory integration (M7-6): representative M2–M6 flows on Factory Pools (initial and later deposit, withdrawal, both swaps, quote, deficit + `sync`, `skim`, terminal path, reentrancy smoke); runtime `codehash` of a Factory Pool equals that of a directly deployed Pool with identical constructor arguments. The M2–M6 unit suites keep direct deployment; F06 does not claim they were re-run through the Factory | `NOT IMPLEMENTED` |
+| F07 | `forge build --sizes`: runtime below 24,576 B and initcode below 49,152 B for `AMMPool` and `AMMFactory`; margins recorded with the configuration (§14) | `NOT IMPLEMENTED` |
+| X03-F | Factory ownerless: compiled ABI (`out/AMMFactory.sol/AMMFactory.json`) lists exactly `allPairs(uint256)`, `allPairsLength()`, `createPair(address,address)`, `getPair(address,address)`, `surplusRecipient()`; no `fallback` / `receive`; admin-style selectors, a fuzzed unknown selector and a plain ETH transfer fail with no state change. The Factory does not expose payable entry points or token withdrawal functions (M7-7) | `NOT IMPLEMENTED` |
 
 ## 11. Cross-cutting, fuzz and boundary (M5, M8, M10)
 
@@ -332,6 +338,7 @@ If any setting changes, earlier measurements are not comparable with later ones;
 |---|---|---|---|---|
 | G01 | `swapExactInput` gas with and without the on-chain §6.5 assertion | Input to the A9 decision | M5 | Measured 2026-11-19 (§14.2); A9 decided: tests only (DECISIONS M5-9) |
 | G03 | Cost of the M6 deficit entry check; M6-3 snapshot-reuse variant B vs. A | Input to the B decision (DECISIONS M6-3) | M6 | Measured 2026-11-19 (§14.3); B not adopted (DECISIONS M6-8) |
+| G04 | `createPair` gas (one measurement, configuration recorded) | Report only; no optimisation (DECISIONS M7-7) | M7 | `NOT IMPLEMENTED` |
 | G02 | Gas snapshot of all public functions | Report and later optimisation baseline | M10 | `NOT IMPLEMENTED` |
 
 ### 14.1 M4 hardening measurements (2026-11-19)
@@ -405,3 +412,13 @@ Configuration verified with `forge config` immediately before measuring: `solc` 
 4. Maintainability: the straightforward B (both cached balances passed on) does **not compile** (`Stack too deep` in `swapExactInput`, `removeLiquidity` and `_addLater`); the compiling version needs two duplicated helpers (`_pullFrom`, `_pushFrom`), a block scope in the swap, and an extra `_addLater` parameter that uses one of the last free stack slots before M8 adds L-α tax handling there. Runtime +587 B and deployment +126,979 gas once per Pool; break-even on runtime alone after about 148 calls per Pool.
 
 Status: measured; **B not adopted, A kept** (student, DECISIONS M6-8, with the accepted trade-off recorded there). These are single-scenario measurements, not a full gas snapshot (G02, M10).
+
+## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
+
+Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
+
+| Result | Meaning |
+|---|---|
+| Compiles, at least one test fails | Killed: the tests detected the behavioural error |
+| Compiles, all tests pass | Survived: a possible test gap or an equivalent mutant; must be analysed and reported |
+| Does not compile | Not compilable: does **not** count as a behavioural test success |

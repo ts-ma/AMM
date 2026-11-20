@@ -1,6 +1,6 @@
 # ARCHITECTURE — AMM Specification (Pre-Implementation)
 
-**Last updated:** 2026-11-19
+**Last updated:** 2026-11-20
 
 **Status:** Target architecture, partly implemented (M2–M6 accepted). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
@@ -57,7 +57,7 @@ Names are `PROPOSED`.
 | Pool | Reentrancy lock | OZ `ReentrancyGuardTransient` (transient storage). | `APPROVED` (D11, M3-5) |
 | Factory | `getPair[token0][token1]` plus reverse lookup | At most one Pool per unordered pair. | `APPROVED` |
 | Factory | `allPairs` | Enumeration. | `APPROVED` (U11) |
-| Factory | `surplusRecipient` (`immutable`) shared by all Pools | — | `PENDING` (M7) |
+| Factory | `surplusRecipient` (`immutable`) shared by all Pools | Constructor argument; rejects `address(0)` and the Factory itself; no setter. | `APPROVED` (M7-1) |
 | — | `kLast`, `feeTo`, owner | Absent. | `FUTURE-ONLY` |
 
 An `immutable` is assigned once in the constructor and embedded in the runtime bytecode (no storage slot); nobody can change it afterwards. The deployer (`msg.sender`) is not recorded and gains no rights.
@@ -404,22 +404,33 @@ Review rule per milestone: every `_mint`/`_burn` call site in `src/` is listed a
 
 | Topic | Specification | Status |
 |---|---|---|
-| `createPair(tokenA, tokenB) → pool` | Reject identical or zero addresses; sort; reject an existing pair; `new AMMPool(token0, token1, surplusRecipient)`; register both orderings; push to `allPairs`; emit event. | `APPROVED` (D1, U11) |
-| `getPair(tokenA, tokenB)` | Both orders return the same address. | `APPROVED` |
-| `allPairs` | Enumerable list. | `APPROVED` (U11) |
+Contract `AMMFactory` in `src/AMMFactory.sol` (DECISIONS M7-4).
+
+| Topic | Specification | Status |
+|---|---|---|
+| `constructor(address surplusRecipient_)` | Stores the shared recipient as `public immutable`; rejects `address(0)` and `address(this)` with `InvalidSurplusRecipient()`. | `APPROVED` (M7-1) |
+| `createPair(address tokenA, address tokenB) external returns (address pool)` | Order: either address 0 → `ZeroAddress()`; equal → `IdenticalTokens()`; sort; either without code → `TokenHasNoCode()`; registered → `PairExists()`; `new AMMPool(token0, token1, surplusRecipient)` (the Pool's own four recipient checks still apply); register both orderings; push to `allPairs`; emit `PairCreated`. No external call, so no reentrancy point and no `nonReentrant`. | `APPROVED` (D1, U11, M7-2, M7-4) |
+| `getPair(address, address)` (public mapping) | Both orders return the same address; 0 if no pair. The authoritative way to verify that a Pool is genuine. | `APPROVED` (M7-3) |
+| `allPairs(uint256)`, `allPairsLength()` | Enumerable list in creation order. | `APPROVED` (U11, M7-4) |
 | Deployment | Ordinary `new` (CREATE); no CREATE2. | `APPROVED` (U11) |
-| One shared `surplusRecipient` for all Pools | — | `PENDING` (M7) |
-| Token code-existence check | Would reject not-yet-deployed addresses, including predictable future Pool addresses. | `PENDING` (M7) |
-| Pool stores `factory` | — | `PENDING` (M7) |
+| Shared `surplusRecipient` | One immutable value for every Pool of this Factory. | `APPROVED` (M7-1) |
+| Token code-existence check | Only in the Factory; the Pool constructor (M2) is unchanged, so a directly deployed Pool still accepts code-less addresses. Code existence does not prove ERC-20 compliance or safety. A pair cannot be created in advance for a not-yet-deployed token (including predictable future Pool / LP addresses). | `APPROVED` (M7-2) |
+| Pool stores `factory` | No; Pool constructor, ABI and M2-2 unchanged. | `APPROVED` (M7-3) |
+| Privileges and funds | No owner, no setter, no payable entry point, no `fallback` / `receive`, no token-withdrawal function. Report wording: "Factory does not expose payable entry points or token withdrawal functions." | `APPROVED` (D10, M7-7) |
+| Terminal pairs | A pair whose Pool is terminal (M6-1) can never be re-created by this Factory (`PairExists()`). | `APPROVED` (M7-5) |
 
-**Effects of introducing the Factory (zero Pool changes are not guaranteed):**
+**Deployment requirements for the shared recipient (DECISIONS M7-1):**
 
-- The Pool constructor's `msg.sender` becomes the Factory; the Pool still does not trust it.
-- The constructor signature may need adjusting.
-- Token validation is split between Factory and Pool constructor; both must be tested.
-- The Factory embeds Pool creation code; check `forge build --sizes` against the 24,576-byte runtime limit (and initcode size separately).
-- Test fixtures must deploy through the Factory (or support both paths), and M2–M6 tests must be re-run.
-- Maths and accounting are expected to stay the same; only regression tests can confirm it.
+- Before deploying the Factory, the recipient address must be fixed explicitly and checked, so that it can receive **and withdraw** the expected ERC-20 tokens (e.g. an account or contract under the operator's control that is not blacklisted by those tokens).
+- A wrong recipient cannot be repaired in an existing Factory. The only remedy is deploying a new Factory; Pools of the old Factory keep the old recipient and are not migrated automatically.
+- If the recipient is itself a token contract X, no pair containing X can be created (the Pool constructor rejects it with `InvalidSurplusRecipient()`).
+
+**Effects of introducing the Factory:**
+
+- The Pool constructor's `msg.sender` becomes the Factory; the Pool neither reads nor trusts it (M7-3). The Pool constructor signature is unchanged.
+- Token validation is split: zero / identical / code existence / uniqueness in the Factory, zero / identical / sort / four recipient checks in the Pool; both are tested.
+- The Factory's runtime embeds the Pool's creation code; `forge build --sizes` is checked against the 24,576-byte runtime limit and the 49,152-byte initcode limit for both contracts (F07). The Factory grows with the Pool (M8).
+- Regression (M7-6): the M2–M6 Pool unit suites keep deploying directly; a Factory integration suite runs representative flows on Factory Pools, and equal runtime `codehash` for identical constructor arguments shows that both deployment paths execute the same code.
 
 No public one-time `initialize()`; use the parameterised constructor.
 
@@ -431,6 +442,7 @@ Typed events for: pair creation, liquidity added, liquidity removed, swap, defic
 - `LiquidityRemoved(address indexed sender, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1)` — `APPROVED` (M4-3); amounts are the Pool-side reserve decreases. The recipient's actual receipt is the function's return value; MIN-NET is enforced on-chain from balance snapshots, not from events.
 - `ReserveSynced(address indexed token, uint256 previousReserve, uint256 newReserve)` — `APPROVED` (M6-4); one per lowered token, only when a reserve actually changes; the LP loss is `previousReserve − newReserve`.
 - `SurplusSkimmed(address indexed token, uint256 amount)` — `APPROVED` (M6-4); one per token with surplus; `amount` is the Pool-side decrease (A8); the recipient is always `surplusRecipient`.
+- `PairCreated(address indexed token0, address indexed token1, address pool, uint256 pairCount)` — `APPROVED` (M7-4); emitted by the Factory with sorted tokens; `pairCount` is `allPairs.length` after the push.
 - `Swap(address indexed sender, address indexed recipient, address tokenIn, uint256 amountIn, uint256 amountOut, uint256 netOut)` — `APPROVED` (M5-3). Three distinct, non-interchangeable quantities: `amountIn` = `a`, the Pool's measured input increase in this call; `amountOut` = `out`, the Pool's measured output decrease (= `reserveOut` decrease, checked by A8); `netOut` = the recipient's measured output increase (MIN-NET basis; below `amountOut` for a taxed output).
 
 ## 10. Not in the current version
@@ -461,7 +473,7 @@ Findings from the 2026-11-17 consistency review and how they were resolved.
 | 3 | D8 / D10 status questioned | Both `APPROVED` in DECISIONS.md; no conflict |
 | 4 | Range bound enforced or assumed | A4: `uint256`, documented per-formula ranges, no on-chain cap (§6.6) |
 | 5 | Lock destination | A5: Pool itself (§7.9) |
-| 6 | Shared Factory `surplusRecipient` | Left `PENDING` for M7 |
+| 6 | Shared Factory `surplusRecipient` | Resolved in M7 (DECISIONS M7-1) |
 | 7 | L-α tolerance unproven; first-deposit hints | Proof in §6.2; hints ignored on first deposit (A7) |
 | 8 | Inflation protection overstated | Wording is "mitigation", THREAT_MODEL T4 |
 | 9 | Brief not verified | Verified against `Coursework.docx` (§1) |
