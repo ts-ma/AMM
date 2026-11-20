@@ -216,6 +216,25 @@ contract AMMFactoryTest is Test {
         _assertRegistryUnchanged(address(tokenA), eoa, 0);
     }
 
+    /// @dev The check runs on the sorted pair, so both sorted positions are tested explicitly:
+    ///      the code-less address is the lowest (sorted token0) or the highest (sorted token1)
+    ///      possible non-precompile address, independent of where the mocks were deployed.
+    function test_F03_noCodeAsSortedToken0Reverts() public {
+        address low = address(uint160(0x10000));
+        assertEq(low.code.length, 0);
+        vm.expectRevert(AMMFactory.TokenHasNoCode.selector);
+        factory.createPair(address(tokenA), low);
+        _assertRegistryUnchanged(address(tokenA), low, 0);
+    }
+
+    function test_F03_noCodeAsSortedToken1Reverts() public {
+        address high = address(type(uint160).max);
+        assertEq(high.code.length, 0);
+        vm.expectRevert(AMMFactory.TokenHasNoCode.selector);
+        factory.createPair(high, address(tokenA));
+        _assertRegistryUnchanged(high, address(tokenA), 0);
+    }
+
     function test_F03_bothNoCodeReverts() public {
         address e1 = makeAddr("eoa1");
         address e2 = makeAddr("eoa2");
