@@ -229,17 +229,19 @@ Each test records `balance_i` and `reserve_i` for both tokens before and after o
 |---|---|---|
 Decisions: DECISIONS §14 (M7-1 to M7-8). Every revert asserts the exact error (M4-8) and that the registry (`getPair` both orders, `allPairsLength`) is unchanged.
 
+**M7 results (2026-11-20, branch `m7-factory`):** 323 tests passing (275 before M7 + 48 new: `AMMFactory` 28, `AMMFactoryOwnerless` 6, `AMMFactoryIntegration` 8, `AMMFactoryIsolation` 6), also with `FOUNDRY_FUZZ_RUNS=10000`; `AMMPool.sol` unchanged in M7. Fuzz range: `testFuzz_F02_getPairSymmetric` uses any two distinct addresses above `0xffff` with no prior code, given placeholder code by `vm.etch` — it shows ordering-independence of the registry, not that such addresses are usable tokens. **Mutation check** (scratchpad script, `src/AMMFactory.sol` restored byte-for-byte; classes per §15): 14 mutants, **14 killed, 0 survived, 0 not compilable** — reverse ordering not registered; forward ordering not registered; duplicate check removed; code check removed; code check only on token0; only on token1; sorting removed; `allPairs` not pushed; non-shared recipient (`msg.sender`) passed to the Pool; `createPair` payable; zero check removed; identical checked before zero; constructor self-check removed; `pairCount` off by one. The first run showed the token0-only mutant killed only incidentally (by the address order of one test); `test_F03_noCodeAsSortedToken0Reverts` / `_AsSortedToken1Reverts` were added so each sorted position is checked explicitly. `forge lint`: `reentrancy-events` on the `PairCreated` emit counts `new AMMPool` as an external call; accepted, because the only code run by the creation is the Pool constructor, which calls no contract (DECISIONS M7-4).
+
 | ID | Description | Status |
 |---|---|---|
-| F01 | Unique pair created: returned address equals `getPair`; `allPairs[n] == pool`; `allPairsLength` grows by 1; `PairCreated(token0, token1, pool, pairCount)` with sorted tokens, for both argument orders | `NOT IMPLEMENTED` |
-| F02 | `getPair(A,B) == getPair(B,A)`; unknown pair returns 0 | `NOT IMPLEMENTED` |
-| F03 | `ZeroAddress` (zero in either position, and `(0, 0)`), `IdenticalTokens`, `TokenHasNoCode` (EOA in either position; M7-2), `PairExists` (same and reverse order); check order as M7-4 | `NOT IMPLEMENTED` |
-| F04 | Two Pools sharing a token, `(A,B)` and `(A,C)`: reserves, LP balances and supply independent; donation / `sync` / `skim` in one leave the other unchanged; both skim to the shared recipient | `NOT IMPLEMENTED` |
-| F04b | A pair whose Pool is terminal (M6-1) cannot be re-created: `createPair` reverts `PairExists` in both orders (M7-5) | `NOT IMPLEMENTED` |
-| F05 | Every Pool's `surplusRecipient` equals the Factory's; Factory constructor rejects `address(0)` and the Factory itself (`InvalidSurplusRecipient`); a recipient equal to a token makes `createPair` for that token revert `InvalidSurplusRecipient` (M7-1) | `NOT IMPLEMENTED` |
-| F06 | Factory integration (M7-6): representative M2–M6 flows on Factory Pools (initial and later deposit, withdrawal, both swaps, quote, deficit + `sync`, `skim`, terminal path, reentrancy smoke); runtime `codehash` of a Factory Pool equals that of a directly deployed Pool with identical constructor arguments. The M2–M6 unit suites keep direct deployment; F06 does not claim they were re-run through the Factory | `NOT IMPLEMENTED` |
-| F07 | `forge build --sizes`: runtime below 24,576 B and initcode below 49,152 B for `AMMPool` and `AMMFactory`; margins recorded with the configuration (§14) | `NOT IMPLEMENTED` |
-| X03-F | Factory ownerless: compiled ABI (`out/AMMFactory.sol/AMMFactory.json`) lists exactly `allPairs(uint256)`, `allPairsLength()`, `createPair(address,address)`, `getPair(address,address)`, `surplusRecipient()`; no `fallback` / `receive`; admin-style selectors, a fuzzed unknown selector and a plain ETH transfer fail with no state change. The Factory does not expose payable entry points or token withdrawal functions (M7-7) | `NOT IMPLEMENTED` |
+| F01 | Unique pair created: returned address equals `getPair`; `allPairs[n] == pool`; `allPairsLength` grows by 1; `PairCreated(token0, token1, pool, pairCount)` with sorted tokens, for both argument orders | `PASSED` (M7) — `test_F01_createPairRegistersAndEmits`, `test_F01_reverseArgumentOrderSortsTheSame`, `test_F01_secondPairAppendsAndCounts`, `test_F01_allPairsOutOfRangeReverts` |
+| F02 | `getPair(A,B) == getPair(B,A)`; unknown pair returns 0 | `PASSED` (M7) — `test_F02_getPairBothOrders`, `test_F02_unknownPairIsZero`, `testFuzz_F02_getPairSymmetric` |
+| F03 | `ZeroAddress` (zero in either position, and `(0, 0)`), `IdenticalTokens`, `TokenHasNoCode` (EOA in either position; M7-2), `PairExists` (same and reverse order); check order as M7-4 | `PASSED` (M7) — `test_F03_zero*`, `test_F03_bothZeroReportsZeroAddress`, `test_F03_identicalReverts`, `test_F03_duplicate*`, `test_F03_noCode*` (incl. each sorted position), `test_F03_bothNoCodeReverts`, `test_F03_precompileRejected`, `test_F03_identicalNoCodeReportsIdentical`, `test_F03_noCodeCheckedBeforePairExists`; M7-2 limits: `test_F03_cannotPrecreatePairForFutureToken`, `test_F03_codeIsNotErc20Compliance` |
+| F04 | Two Pools sharing a token, `(A,B)` and `(A,C)`: reserves, LP balances and supply independent; donation / `sync` / `skim` in one leave the other unchanged; both skim to the shared recipient | `PASSED` (M7) — `test/AMMFactoryIsolation.t.sol` `test_F04_*` (5 tests; P2's reserves, LP supply, lock, LP balances and token balances compared) |
+| F04b | A pair whose Pool is terminal (M6-1) cannot be re-created: `createPair` reverts `PairExists` in both orders (M7-5) | `PASSED` (M7) — `test_F04b_terminalPairCannotBeRecreated` |
+| F05 | Every Pool's `surplusRecipient` equals the Factory's; Factory constructor rejects `address(0)` and the Factory itself (`InvalidSurplusRecipient`); a recipient equal to a token makes `createPair` for that token revert `InvalidSurplusRecipient` (M7-1) | `PASSED` (M7) — `test_F05_constructorStoresRecipient`, `test_F05_constructorRejectsZeroRecipient`, `test_F05_constructorRejectsFactoryItself`, `test_F05_poolsShareFactoryRecipient`, `test_F05_recipientEqualToTokenBlocksItsPairs` |
+| F06 | Factory integration (M7-6): representative M2–M6 flows on Factory Pools (initial and later deposit, withdrawal, both swaps, quote, deficit + `sync`, `skim`, terminal path, reentrancy smoke); runtime `codehash` of a Factory Pool equals that of a directly deployed Pool with identical constructor arguments. The M2–M6 unit suites keep direct deployment; F06 does not claim they were re-run through the Factory | `PASSED` (M7) — `test/AMMFactoryIntegration.t.sol`: `test_F06_codehashEqualsDirectDeployment`, `test_F06_codehashDiffersForOtherArguments` (equality is not vacuous), `test_F06_differentialMatchesDirectPool` (12 observable results equal), `test_F06_initialDepositAndLock`, `test_F06_deficitBlocksThenSyncReconciles`, `test_F06_skimPaysSharedRecipient`, `test_F06_terminalPoolPath`, `test_F06_reentrancyBubblesOnFactoryPool` |
+| F07 | `forge build --sizes`: runtime below 24,576 B and initcode below 49,152 B for `AMMPool` and `AMMFactory`; margins recorded with the configuration (§14) | `PASSED` (M7) — `forge build --sizes` (configuration of §14, `forge config` checked 2026-11-20): `AMMPool` runtime 8,563 B (margin 16,013), initcode 9,635 B (margin 39,517); `AMMFactory` runtime 10,696 B (margin 13,880), initcode 10,894 B (margin 38,258). The Factory's runtime embeds the Pool's initcode, so it grows with the Pool in M8 |
+| X03-F | Factory ownerless: compiled ABI (`out/AMMFactory.sol/AMMFactory.json`) lists exactly `allPairs(uint256)`, `allPairsLength()`, `createPair(address,address)`, `getPair(address,address)`, `surplusRecipient()`; no `fallback` / `receive`; admin-style selectors, a fuzzed unknown selector and a plain ETH transfer fail with no state change. The Factory does not expose payable entry points or token withdrawal functions (M7-7) | `PASSED` (M7) — `test_X03F_static_abiFunctionsEqualApprovedList`, `test_X03F_static_noFallbackReceiveOrPayable` (no ABI entry, constructor included, is payable), `test_X03F_runtime_adminAndWithdrawalSelectorsFail`, `test_X03F_runtime_plainEthTransferFails`, `test_X03F_runtime_ethWithApprovedFunctionsFails`, `testFuzz_X03F_runtime_unknownSelectorFails` |
 
 ## 11. Cross-cutting, fuzz and boundary (M5, M8, M10)
 
@@ -338,7 +340,7 @@ If any setting changes, earlier measurements are not comparable with later ones;
 |---|---|---|---|---|
 | G01 | `swapExactInput` gas with and without the on-chain §6.5 assertion | Input to the A9 decision | M5 | Measured 2026-11-19 (§14.2); A9 decided: tests only (DECISIONS M5-9) |
 | G03 | Cost of the M6 deficit entry check; M6-3 snapshot-reuse variant B vs. A | Input to the B decision (DECISIONS M6-3) | M6 | Measured 2026-11-19 (§14.3); B not adopted (DECISIONS M6-8) |
-| G04 | `createPair` gas (one measurement, configuration recorded) | Report only; no optimisation (DECISIONS M7-7) | M7 | `NOT IMPLEMENTED` |
+| G04 | `createPair` gas (one measurement, configuration recorded) | Report only; no optimisation (DECISIONS M7-7) | M7 | Measured 2026-11-20 (§14.4) |
 | G02 | Gas snapshot of all public functions | Report and later optimisation baseline | M10 | `NOT IMPLEMENTED` |
 
 ### 14.1 M4 hardening measurements (2026-11-19)
@@ -412,6 +414,18 @@ Configuration verified with `forge config` immediately before measuring: `solc` 
 4. Maintainability: the straightforward B (both cached balances passed on) does **not compile** (`Stack too deep` in `swapExactInput`, `removeLiquidity` and `_addLater`); the compiling version needs two duplicated helpers (`_pullFrom`, `_pushFrom`), a block scope in the swap, and an extra `_addLater` parameter that uses one of the last free stack slots before M8 adds L-α tax handling there. Runtime +587 B and deployment +126,979 gas once per Pool; break-even on runtime alone after about 148 calls per Pool.
 
 Status: measured; **B not adopted, A kept** (student, DECISIONS M6-8, with the accepted trade-off recorded there). These are single-scenario measurements, not a full gas snapshot (G02, M10).
+
+### 14.4 G04 — `createPair` (2026-11-20, branch `m7-factory`, base commit `a70c42a`)
+
+Configuration: §14 table, checked with `forge config` immediately before measuring (`solc` 0.8.38, optimizer on, 200 runs, `osaka`, `via_ir = false`, OZ v5.7.0, forge 1.9.0). Source: `forge test --match-test "test_F01_secondPairAppendsAndCounts|test_F02_getPairBothOrders" --gas-report` (successful calls only; call gas as reported by forge, without the 21,000 transaction base cost and calldata).
+
+| Measurement | Gas |
+|---|---:|
+| `createPair`, first pair of the Factory (`allPairs` length slot 0 → 1) | 1,914,651 |
+| `createPair`, later pair | 1,897,551 |
+| `AMMFactory` deployment | 2,360,843 (10,926 B) |
+
+Almost all of the cost is the deployment of the Pool's code (runtime 8,563 B); the registry writes (two `getPair` entries, `allPairs` push) and the code-existence check are a small part. No optimisation is proposed (report only, M7-7).
 
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
