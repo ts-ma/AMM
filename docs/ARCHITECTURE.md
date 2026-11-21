@@ -314,10 +314,13 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 - **M3:** only the initial (`S == 0`) branch; `S > 0` reverted `LaterDepositNotImplemented()` (DECISIONS M3-3). Exact checks, errors and event: DECISIONS M3-4. The deficit entry check is added in M6 (with reserves 0, no deficit can exist in M3).
 - **M4:** `S > 0` with both hints 0 follows §6.2 with `t = 0` (`g_i = T_i`); errors per DECISIONS M4-2. `S > 0` with any non-zero hint reverts `TaxedLaterDepositNotImplemented()` before any transfer until M8 (DECISIONS M4-1).
 - **M6:** in the `S > 0` branch only, in this order before any transfer: deficit → `ReserveDeficit()` (M6-2); either reserve 0 → `InsufficientLiquidity()` (terminal pool, M6-1); then the temporary hint check. With `S == 0` both reserves are 0, so no deficit can exist and the check is skipped.
-- **M8 (design approved in principle, ABI not yet approved; DECISIONS M8-1 to M8-13):** the signature becomes a single struct parameter; this section is rewritten in the M8 decisions commit. Rules already fixed for that rewrite:
+- **M8 (ABI approved; DECISIONS M8-1 to M8-13):** the signature becomes `addLiquidity(IAMMPool.AddLiquidityParams calldata p)` (fields and selector in DECISIONS M8-8); this section is rewritten together with the implementation. Rules fixed for that rewrite:
   - The per-token request field is a cap on what the Pool may request, **not a promise that this amount is transferred**. Step 2 and the re-plan may request less, and the payer's actual debit can differ from the request; the debit is bounded only by `maxDebit`.
   - The payer is always `msg.sender`. With a router, the router is the payer and `maxDebit` protects the router, not the end user. The LP `recipient` may differ from the payer.
   - On the initial deposit the excess fields have no effect (`u_i = 0` by definition).
+  - `token1First` changes only the pull order. Return values and `LiquidityAdded` always report in sorted token order.
+  - Zero cases: a `RequestMax` of 0 → `ZeroAmount()`; step-2 target 0 → `InsufficientDepositAmount()`; re-planned second target 0 → `InsufficientDepositAmount()` before the second transfer; second net 0 → `InsufficientShares()`.
+  - Unmatched excess is included in the recorded reserves. It can transfer economic value from the depositor to pre-existing LP holders, while the depositor keeps a proportional claim through the newly minted shares.
   - Postcondition: BI-2′ (§5.5).
 
 ### 7.3 `removeLiquidity(shares, min0Net, min1Net, recipient, deadline) → (net0, net1)`
