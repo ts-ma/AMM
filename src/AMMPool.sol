@@ -15,8 +15,8 @@ import {IAMMPool} from "./interfaces/IAMMPool.sol";
 ///      controls and the initial deposit with the permanent 1,000-unit lock (M3), Tier 0 later
 ///      deposits and proportional withdrawal (M4), exact-input swap (M5), downward-only sync,
 ///      per-token skim, deficit entry checks and terminal-pool rules (M6), measured-net
-///      deposit with a struct ABI and payer-debit bound (M8, WORK IN PROGRESS: DECISIONS M8-11
-///      BI-2′ is not implemented yet; not for deployment).
+///      deposit with a struct ABI, payer-debit bound and in-call balance rule BI-2′ (M8, WORK IN
+///      PROGRESS until the M8 acceptance; not for deployment).
 ///      add, remove and swap revert on a deficit (balance < reserve; U4, DECISIONS M6-2).
 ///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.4, §7.1–§7.9.
 contract AMMPool is ERC20, ReentrancyGuardTransient {
@@ -122,6 +122,10 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @notice The payer's (`msg.sender`'s) net balance decrease of one token over the whole
     ///         `addLiquidity` call exceeds the caller's `maxDebit` for that token (DECISIONS M8-3).
     error PayerDebitTooHigh();
+    /// @notice During `addLiquidity` the Pool's balance of one token rose by less than this call's
+    ///         own measured net for it: something else removed Pool tokens mid-call (BI-2′,
+    ///         DECISIONS M8-11). A surplus loss need not create a deficit, hence not `ReserveDeficit`.
+    error InCallBalanceLoss();
     /// @notice A withdrawal's proportional amount of one token rounds down to 0 (ARCHITECTURE §6.3).
     error InsufficientLiquidityBurned();
     /// @notice The Pool's balance did not fall by exactly the amount sent (A8, BI-5).
@@ -174,14 +178,15 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      Checks before any transfer (M3-4, M6-2, M6-1): deadline → recipient → zero request →
     ///      (later only) deficit → terminal pool. Then the payer snapshot (M8-3), the transfers,
     ///      and the post-transfer checks in the order of M8-13 (d):
-    ///      [`InCallBalanceLoss`, commit 4] → `PayerDebitTooHigh` → later: `InsufficientShares` →
+    ///      `InCallBalanceLoss` → `PayerDebitTooHigh` → later: `InsufficientShares` →
     ///      checked `supply + shares` → `ExcessContributionTooHigh`; initial:
     ///      `InsufficientInitialLiquidity` → `InsufficientShares`.
     ///      Call order: the inbound transfers necessarily happen before the reserves are written,
     ///      because the Pool must measure what it actually received; `nonReentrant` blocks any
     ///      token callback from re-entering a state-changing function (ARCHITECTURE §7).
-    ///      WORK IN PROGRESS (M8 commits 2–4): the in-call balance rule BI-2′ (M8-11) is not yet
-    ///      checked.
+    ///      BI-2′ (M8-11, X1, initial and later deposit): for each token the Pool's balance at the
+    ///      end must exceed its balance before the first transfer by at least this call's own
+    ///      measured net; with `reserve_i += net_i` this is "surplus does not decrease".
     /// @param p See `IAMMPool.AddLiquidityParams`.
     /// @return net0 Measured token0 received by the Pool (token0, whatever the pull order).
     /// @return net1 Measured token1 received by the Pool.
@@ -204,8 +209,12 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
             if (reserve0 == 0 || reserve1 == 0) revert AMMMath.InsufficientLiquidity();
         }
 
-        // M8-3: whole-call snapshot of the payer (always msg.sender) — after every check and
-        // before the first transfer. View calls only (STATICCALL), so no callback point here.
+        // Whole-call snapshots — after every check and before the first transfer. View calls
+        // only (STATICCALL), so no callback point and no balance change between these reads and
+        // the entry deficit check above. Pool side: BI-2′ (M8-11); payer side (always
+        // msg.sender): M8-3.
+        uint256 poolStart0 = IERC20(token0).balanceOf(address(this));
+        uint256 poolStart1 = IERC20(token1).balanceOf(address(this));
         uint256 payerStart0 = IERC20(token0).balanceOf(msg.sender);
         uint256 payerStart1 = IERC20(token1).balanceOf(msg.sender);
 
@@ -225,6 +234,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         }
 
         // After the last token call that can move value (the second pull and its measurement).
+        _checkInCallBalance(poolStart0, poolStart1, net0, net1);
         _checkPayerDebit(payerStart0, payerStart1, p.maxDebit0, p.maxDebit1);
 
         if (supply == 0) {
@@ -526,6 +536,19 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         reserve0 = r0 + net0;
         reserve1 = r1 + net1;
         _mint(p.recipient, shares);
+    }
+
+    /// @dev BI-2′ check (DECISIONS M8-11, X1, `addLiquidity` only): fresh end readings of the
+    ///      Pool's balances must satisfy, per token, `end ≥ start && end − start ≥ net` (written so
+    ///      that nothing underflows: `end < start` is tested first). `net_i` is the own measured
+    ///      transfer, so a foreign in-call gift passes (surplus rises) and any foreign in-call
+    ///      removal fails, whether or not it creates a deficit. Token0 is checked first.
+    ///      Trust assumption: `balanceOf` is truthful (ARCHITECTURE §3).
+    function _checkInCallBalance(uint256 start0, uint256 start1, uint256 net0, uint256 net1) private view {
+        uint256 end0 = IERC20(token0).balanceOf(address(this));
+        if (end0 < start0 || end0 - start0 < net0) revert InCallBalanceLoss();
+        uint256 end1 = IERC20(token1).balanceOf(address(this));
+        if (end1 < start1 || end1 - start1 < net1) revert InCallBalanceLoss();
     }
 
     /// @dev M8-3 payer check: the net decrease of `msg.sender`'s balance of each token over the
