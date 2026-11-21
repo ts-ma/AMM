@@ -6,6 +6,7 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 import {AMMPool} from "../src/AMMPool.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {Wide512} from "./utils/Wide512.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice Z06 by differential fuzzing (DECISIONS M4H-3): a later deposit over the FULL uint256
 ///         range of caps and caller balances, and extreme reserve ratios, is compared with an
@@ -115,7 +116,7 @@ contract AMMPoolDepositDifferentialTest is Test {
         vm.startPrank(alice);
         t0.approve(address(pool), MAX);
         t1.approve(address(pool), MAX);
-        pool.addLiquidity(a0, a1, 0, 0, 0, alice, block.timestamp);
+        pool.addLiquidity(addParams(a0, a1, 0, alice, block.timestamp));
         vm.stopPrank();
 
         fund0 = bound(f0, 0, MAX - t0.totalSupply());
@@ -134,7 +135,7 @@ contract AMMPoolDepositDifferentialTest is Test {
         Expected memory e = _predict(c0, c1);
         vm.prank(bob);
         (bool ok, bytes memory ret) =
-            address(pool).call(abi.encodeCall(AMMPool.addLiquidity, (c0, c1, 0, 0, 0, bob, block.timestamp)));
+            address(pool).call(abi.encodeCall(AMMPool.addLiquidity, (addParams(c0, c1, 0, bob, block.timestamp))));
         (uint256 rr0, uint256 rr1) = pool.getReserves();
 
         if (e.err.length != 0) {

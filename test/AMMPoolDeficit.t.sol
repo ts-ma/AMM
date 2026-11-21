@@ -5,6 +5,7 @@ import {AMMPool} from "../src/AMMPool.sol";
 import {AMMMath} from "../src/libraries/AMMMath.sol";
 import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {PoolStateFixture} from "./utils/PoolStateFixture.sol";
+import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
 /// @notice M6: deficit entry check on add, remove and swap (U4, ARCHITECTURE §5.3;
 ///         DECISIONS M6-2). TEST_MATRIX R08. Every revert asserts the exact error (M4-8) and
@@ -12,8 +13,9 @@ import {PoolStateFixture} from "./utils/PoolStateFixture.sol";
 contract AMMPoolDeficitTest is PoolStateFixture {
     bytes internal constant DEFICIT = abi.encodeWithSelector(AMMPool.ReserveDeficit.selector);
 
-    function _addData(uint256 tax0) internal view returns (bytes memory) {
-        return abi.encodeCall(AMMPool.addLiquidity, (1000, 4000, tax0, 0, 0, alice, block.timestamp));
+    function _addData(bool token1First) internal view returns (bytes memory) {
+        return
+            abi.encodeCall(AMMPool.addLiquidity, (addParamsOrdered(1000, 4000, 0, alice, block.timestamp, token1First)));
     }
 
     function _removeData(uint256 shares) internal view returns (bytes memory) {
@@ -26,7 +28,8 @@ contract AMMPoolDeficitTest is PoolStateFixture {
 
     /// @dev All four operations revert ReserveDeficit with full rollback.
     function _assertAllRevert() internal {
-        _expectRevertNoChange(alice, _addData(0), DEFICIT);
+        _expectRevertNoChange(alice, _addData(false), DEFICIT);
+        _expectRevertNoChange(alice, _addData(true), DEFICIT);
         _expectRevertNoChange(alice, _removeData(1000), DEFICIT);
         _expectRevertNoChange(bob, _swapData(address(t0)), DEFICIT);
         _expectRevertNoChange(bob, _swapData(address(t1)), DEFICIT);
@@ -67,7 +70,7 @@ contract AMMPoolDeficitTest is PoolStateFixture {
         vm.prank(bob);
         pool.swapExactInput(address(t0), 10_000, 0, carol, block.timestamp);
         vm.prank(alice);
-        pool.addLiquidity(1000, 4000, 0, 0, 0, alice, block.timestamp);
+        pool.addLiquidity(addParams(1000, 4000, 0, alice, block.timestamp));
         vm.prank(alice);
         pool.removeLiquidity(1000, 0, 0, carol, block.timestamp);
     }
@@ -97,7 +100,7 @@ contract AMMPoolDeficitTest is PoolStateFixture {
         assertEq(out, expected, "priced from reconciled reserves");
 
         vm.prank(alice);
-        (uint256 n0, uint256 n1, uint256 s) = pool.addLiquidity(1000, 1_000_000, 0, 0, 0, alice, block.timestamp);
+        (uint256 n0, uint256 n1, uint256 s) = pool.addLiquidity(addParams(1000, 1_000_000, 0, alice, block.timestamp));
         assertGt(s, 0);
         assertGt(n0, 0);
         assertGt(n1, 0);
@@ -118,26 +121,23 @@ contract AMMPoolDeficitTest is PoolStateFixture {
         uint256 late = block.timestamp - 1;
         _expectRevertNoChange(
             alice,
-            abi.encodeCall(AMMPool.addLiquidity, (1000, 4000, 0, 0, 0, alice, late)),
+            abi.encodeCall(AMMPool.addLiquidity, (addParams(1000, 4000, 0, alice, late))),
             abi.encodeWithSelector(AMMPool.DeadlineExpired.selector)
         );
         _expectRevertNoChange(
             alice,
-            abi.encodeCall(AMMPool.addLiquidity, (1000, 4000, 0, 0, 0, address(pool), block.timestamp)),
+            abi.encodeCall(AMMPool.addLiquidity, (addParams(1000, 4000, 0, address(pool), block.timestamp))),
             abi.encodeWithSelector(AMMPool.InvalidRecipient.selector)
         );
         _expectRevertNoChange(
             alice,
-            abi.encodeCall(AMMPool.addLiquidity, (0, 4000, 0, 0, 0, alice, block.timestamp)),
+            abi.encodeCall(AMMPool.addLiquidity, (addParams(0, 4000, 0, alice, block.timestamp))),
             abi.encodeWithSelector(AMMPool.ZeroAmount.selector)
         );
-        _expectRevertNoChange(
-            alice,
-            abi.encodeCall(AMMPool.addLiquidity, (1000, 4000, 10_000, 0, 0, alice, block.timestamp)),
-            abi.encodeWithSelector(AMMPool.InvalidTaxBps.selector)
-        );
-        // Deficit is reported before the temporary hint check (M4-1).
-        _expectRevertNoChange(alice, _addData(100), DEFICIT);
+        // M8: the tax-hint range check (InvalidTaxBps) no longer exists. The deficit is still
+        // reported before any transfer, whichever token the caller pulls first.
+        _expectRevertNoChange(alice, _addData(false), DEFICIT);
+        _expectRevertNoChange(alice, _addData(true), DEFICIT);
     }
 
     function test_R08_checkOrderRemove() public {
@@ -196,7 +196,7 @@ contract AMMPoolDeficitTest is PoolStateFixture {
         vm.startPrank(alice);
         x.approve(address(p), MAX);
         y.approve(address(p), MAX);
-        (uint256 n0, uint256 n1,) = p.addLiquidity(1e6, 1e6, 0, 0, 0, alice, block.timestamp);
+        (uint256 n0, uint256 n1,) = p.addLiquidity(addParams(1e6, 1e6, 0, alice, block.timestamp));
         vm.stopPrank();
         assertEq(n0, 1e6);
         assertEq(n1, 1e6);

@@ -4,6 +4,7 @@ pragma solidity 0.8.38;
 import {Test} from "forge-std/Test.sol";
 import {AMMPool} from "../src/AMMPool.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice X03 — D10 ownerless (DECISIONS M5-7). Static: the compiled ABI exposes exactly the
 ///         approved functions and no fallback/receive. Runtime: admin-style selectors, unknown
@@ -38,7 +39,8 @@ contract AMMPoolOwnerlessTest is Test {
             "token0()",
             "token1()",
             // Pool operations and views
-            "addLiquidity(uint256,uint256,uint256,uint256,uint256,address,uint256)",
+            // M8 (DECISIONS M8-8): replaces addLiquidity(uint256,uint256,uint256,uint256,uint256,address,uint256)
+            "addLiquidity((uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint256,bool))",
             "removeLiquidity(uint256,uint256,uint256,address,uint256)",
             "swapExactInput(address,uint256,uint256,address,uint256)",
             "getAmountOut(address,uint256)",
@@ -59,7 +61,7 @@ contract AMMPoolOwnerlessTest is Test {
         vm.startPrank(alice);
         t0.approve(address(pool), type(uint256).max);
         t1.approve(address(pool), type(uint256).max);
-        pool.addLiquidity(1e21, 1e21, 0, 0, 0, alice, block.timestamp);
+        pool.addLiquidity(addParams(1e21, 1e21, 0, alice, block.timestamp));
         vm.stopPrank();
     }
 
@@ -79,6 +81,44 @@ contract AMMPoolOwnerlessTest is Test {
             }
             assertTrue(found, string.concat("unapproved function in ABI: ", actual[i]));
         }
+    }
+
+    /// @dev M8-5 (1)/(3), M8-8: the old addLiquidity entry is gone, the new one is present with the
+    ///      approved selector, and the function count is still 22 (one replacement, nothing added).
+    function test_X03_static_addLiquidityReplaced() public view {
+        string memory oldSig = "addLiquidity(uint256,uint256,uint256,uint256,uint256,address,uint256)";
+        string memory newSig =
+            "addLiquidity((uint256,uint256,uint256,uint256,uint256,uint256,uint256,address,uint256,bool))";
+        assertEq(bytes4(keccak256(bytes(oldSig))), bytes4(0x12c62f32), "old selector value");
+        assertEq(bytes4(keccak256(bytes(newSig))), bytes4(0x7713f77f), "new selector value");
+        assertEq(AMMPool.addLiquidity.selector, bytes4(0x7713f77f), "compiled selector = approved");
+
+        string[] memory actual = vm.parseJsonKeys(vm.readFile("out/AMMPool.sol/AMMPool.json"), ".methodIdentifiers");
+        assertEq(actual.length, 22, "still 22 functions");
+        bool hasNew;
+        for (uint256 i; i < actual.length; ++i) {
+            bytes32 h = keccak256(bytes(actual[i]));
+            assertTrue(h != keccak256(bytes(oldSig)), "old addLiquidity absent");
+            if (h == keccak256(bytes(newSig))) hasNew = true;
+        }
+        assertTrue(hasNew, "new addLiquidity present");
+    }
+
+    /// @dev Runtime: the old selector with its old 7-word arguments reaches no code path.
+    function test_X03_runtime_oldAddLiquiditySelectorFails() public {
+        _assertCallFails(
+            abi.encodeWithSelector(
+                bytes4(0x12c62f32),
+                uint256(1e18),
+                uint256(1e18),
+                uint256(0),
+                uint256(0),
+                uint256(0),
+                alice,
+                block.timestamp
+            ),
+            0
+        );
     }
 
     function test_X03_static_noFallbackOrReceive() public view {

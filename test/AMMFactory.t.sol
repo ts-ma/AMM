@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {AMMFactory} from "../src/AMMFactory.sol";
 import {AMMPool} from "../src/AMMPool.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice AMMFactory registry tests (TEST_MATRIX F01–F03, F05; DECISIONS M7-1, M7-4).
 ///         Every revert asserts the exact error (M4-8) and that the registry is unchanged.
@@ -292,7 +293,7 @@ contract AMMFactoryTest is Test {
         tokenA.mint(address(this), 1e18);
         tokenA.approve(pool, type(uint256).max);
         vm.expectRevert(bytes(""));
-        AMMPool(pool).addLiquidity(1e18, 1e18, 0, 0, 0, address(this), block.timestamp);
+        AMMPool(pool).addLiquidity(addParams(1e18, 1e18, 0, address(this), block.timestamp));
     }
 
     // ------------------------------------------------------------------

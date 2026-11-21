@@ -9,6 +9,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {MockOverDebitERC20} from "./mocks/MockOverDebitERC20.sol";
 import {PoolStateFixture} from "./utils/PoolStateFixture.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice M6: per-token `skim()` to the immutable `surplusRecipient` (ARCHITECTURE §5.4, §7.8;
 ///         DECISIONS M6-4, A2, A8). TEST_MATRIX R03, R04, R06, R10–R13, R21 (skim), B04,
@@ -140,7 +141,7 @@ contract AMMPoolSkimTest is PoolStateFixture {
         vm.prank(bob);
         pool.swapExactInput(address(t1), 10_000, 0, carol, block.timestamp);
         vm.prank(alice);
-        pool.addLiquidity(1000, 4000, 0, 0, 0, alice, block.timestamp);
+        pool.addLiquidity(addParams(1000, 4000, 0, alice, block.timestamp));
         vm.prank(alice);
         pool.removeLiquidity(1000, 0, 0, carol, block.timestamp);
         vm.clearMockedCalls();
@@ -269,7 +270,7 @@ contract AMMPoolSkimTest is PoolStateFixture {
         vm.startPrank(alice);
         od.approve(address(p), MAX);
         std.approve(address(p), MAX);
-        p.addLiquidity(1e6, 1e6, 0, 0, 0, alice, block.timestamp);
+        p.addLiquidity(addParams(1e6, 1e6, 0, alice, block.timestamp));
         vm.stopPrank();
         od.mint(address(p), 1000);
         od.setExtra(1);

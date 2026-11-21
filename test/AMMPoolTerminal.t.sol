@@ -6,6 +6,7 @@ import {AMMPool} from "../src/AMMPool.sol";
 import {AMMMath} from "../src/libraries/AMMMath.sol";
 import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {PoolStateFixture} from "./utils/PoolStateFixture.sol";
+import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
 /// @notice M6: terminal pool — a reserve lowered to 0 by `sync()` while LP supply remains
 ///         (DECISIONS M6-1, M4-3r, ADR-023; THREAT_MODEL T25). TEST_MATRIX R15, R16, R18–R22.
@@ -23,7 +24,7 @@ contract AMMPoolTerminalTest is PoolStateFixture {
     function setUp() public override {
         super.setUp();
         vm.prank(bob);
-        pool.addLiquidity(500_000, 1_000_000, 0, 0, 0, bob, block.timestamp);
+        pool.addLiquidity(addParams(500_000, 1_000_000, 0, bob, block.timestamp));
     }
 
     /// @dev Slash the whole Pool balance of `t` and sync: that reserve becomes 0.
@@ -47,15 +48,18 @@ contract AMMPoolTerminalTest is PoolStateFixture {
 
     function _assertNoDepositOrSwap() internal {
         _expectRevertNoChange(
-            alice, abi.encodeCall(AMMPool.addLiquidity, (1000, 1000, 0, 0, 0, alice, block.timestamp)), NO_LIQ
+            alice, abi.encodeCall(AMMPool.addLiquidity, (addParams(1000, 1000, 0, alice, block.timestamp))), NO_LIQ
         );
-        // Before the temporary non-zero-hint revert (M4-1).
+        // M8: the temporary non-zero-hint revert (M4-1) is gone. The terminal check still comes
+        // before any transfer when token1 is pulled first.
         _expectRevertNoChange(
-            alice, abi.encodeCall(AMMPool.addLiquidity, (1000, 1000, 100, 0, 0, alice, block.timestamp)), NO_LIQ
+            alice,
+            abi.encodeCall(AMMPool.addLiquidity, (addParamsOrdered(1000, 1000, 0, alice, block.timestamp, true))),
+            NO_LIQ
         );
         // Unbounded caps: still the custom error, never a division-by-zero Panic.
         _expectRevertNoChange(
-            alice, abi.encodeCall(AMMPool.addLiquidity, (MAX, MAX, 0, 0, 0, alice, block.timestamp)), NO_LIQ
+            alice, abi.encodeCall(AMMPool.addLiquidity, (addParams(MAX, MAX, 0, alice, block.timestamp))), NO_LIQ
         );
         _expectRevertNoChange(
             bob, abi.encodeCall(AMMPool.swapExactInput, (address(t0), 1000, 0, carol, block.timestamp)), NO_LIQ
@@ -86,7 +90,7 @@ contract AMMPoolTerminalTest is PoolStateFixture {
         c1 = bound(c1, 1, MAX);
         _makeTerminal(zeroToken0 ? t0 : t1);
         _expectRevertNoChange(
-            alice, abi.encodeCall(AMMPool.addLiquidity, (c0, c1, 0, 0, 0, alice, block.timestamp)), NO_LIQ
+            alice, abi.encodeCall(AMMPool.addLiquidity, (addParams(c0, c1, 0, alice, block.timestamp))), NO_LIQ
         );
     }
 
@@ -229,7 +233,7 @@ contract AMMPoolTerminalTest is PoolStateFixture {
         _expectRevertNoChange(alice, _removeData(1, 0, 0), BURNED);
         _expectRevertNoChange(alice, _removeData(pool.balanceOf(alice), 0, 0), BURNED);
         _expectRevertNoChange(
-            alice, abi.encodeCall(AMMPool.addLiquidity, (1000, 1000, 0, 0, 0, alice, block.timestamp)), NO_LIQ
+            alice, abi.encodeCall(AMMPool.addLiquidity, (addParams(1000, 1000, 0, alice, block.timestamp))), NO_LIQ
         );
     }
 

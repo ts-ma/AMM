@@ -6,6 +6,7 @@ import {AMMPool} from "../src/AMMPool.sol";
 import {AMMMath} from "../src/libraries/AMMMath.sol";
 import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {PoolStateFixture} from "./utils/PoolStateFixture.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice M6 cross-state scenarios: surplus isolation and transitions between normal, surplus
 ///         and deficit states (ARCHITECTURE §5; Gate R=(b); DECISIONS M6-5).
@@ -77,7 +78,7 @@ contract AMMPoolSyncSkimScenariosTest is PoolStateFixture {
         (uint256 r0, uint256 r1) = _reserves();
         uint256 supply = pool.totalSupply();
         vm.prank(bob);
-        (uint256 n0, uint256 n1, uint256 shares) = pool.addLiquidity(1000, 1e9, 0, 0, 0, bob, block.timestamp);
+        (uint256 n0, uint256 n1, uint256 shares) = pool.addLiquidity(addParams(1000, 1e9, 0, bob, block.timestamp));
         assertEq(n0, 1000);
         assertEq(n1, Math.mulDiv(1000, r1, r0));
         assertEq(shares, Math.min(Math.mulDiv(n0, supply, r0), Math.mulDiv(n1, supply, r1)));
@@ -116,7 +117,7 @@ contract AMMPoolSyncSkimScenariosTest is PoolStateFixture {
         }
 
         vm.prank(attacker);
-        (,, uint256 attackerShares) = p.addLiquidity(1001, 1001, 0, 0, 0, attacker, block.timestamp);
+        (,, uint256 attackerShares) = p.addLiquidity(addParams(1001, 1001, 0, attacker, block.timestamp));
         assertEq(attackerShares, 1, "minimal position");
 
         vm.startPrank(attacker);
@@ -128,7 +129,8 @@ contract AMMPoolSyncSkimScenariosTest is PoolStateFixture {
         assertEq(r1, 1001);
 
         vm.prank(victim);
-        (uint256 n0, uint256 n1, uint256 victimShares) = p.addLiquidity(1e18, 1e18, 0, 0, 0, victim, block.timestamp);
+        (uint256 n0, uint256 n1, uint256 victimShares) =
+            p.addLiquidity(addParams(1e18, 1e18, 0, victim, block.timestamp));
         assertEq(n0, 1e18);
         assertEq(n1, 1e18);
         assertEq(victimShares, Math.mulDiv(1e18, 1001, 1001), "full value, not rounded to 0");

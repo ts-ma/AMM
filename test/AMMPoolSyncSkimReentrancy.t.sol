@@ -7,6 +7,7 @@ import {AMMPool} from "../src/AMMPool.sol";
 import {AMMMath} from "../src/libraries/AMMMath.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {PoolStateFixture} from "./utils/PoolStateFixture.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice M6 reentrancy and snapshot-integrity suite (THREAT_MODEL T1; DECISIONS M5-6, M6-3,
 ///         M6-5). TEST_MATRIX X01 (M6 extension) and B08.
@@ -41,11 +42,11 @@ contract AMMPoolSyncSkimReentrancyTest is PoolStateFixture {
             vm.stopPrank();
         }
         vm.prank(alice);
-        pool.addLiquidity(1e21, 2e21, 0, 0, 0, alice, block.timestamp);
+        pool.addLiquidity(addParams(1e21, 2e21, 0, alice, block.timestamp));
         vm.prank(address(h0));
-        pool.addLiquidity(1e20, 2e20, 0, 0, 0, address(h0), block.timestamp);
+        pool.addLiquidity(addParams(1e20, 2e20, 0, address(h0), block.timestamp));
         vm.prank(address(h1));
-        pool.addLiquidity(1e20, 2e20, 0, 0, 0, address(h1), block.timestamp);
+        pool.addLiquidity(addParams(1e20, 2e20, 0, address(h1), block.timestamp));
     }
 
     // ------------------------------------------------------------------
@@ -56,7 +57,7 @@ contract AMMPoolSyncSkimReentrancyTest is PoolStateFixture {
     function _payloads(address attacker) internal view returns (bytes[5] memory p) {
         p[0] = abi.encodeCall(AMMPool.sync, ());
         p[1] = abi.encodeCall(AMMPool.skim, ());
-        p[2] = abi.encodeCall(AMMPool.addLiquidity, (1e18, 2e18, 0, 0, 0, attacker, block.timestamp));
+        p[2] = abi.encodeCall(AMMPool.addLiquidity, (addParams(1e18, 2e18, 0, attacker, block.timestamp)));
         p[3] = abi.encodeCall(AMMPool.removeLiquidity, (1e15, 0, 0, attacker, block.timestamp));
         p[4] = abi.encodeCall(AMMPool.swapExactInput, (address(h0), 1e15, 0, attacker, block.timestamp));
     }
@@ -72,7 +73,7 @@ contract AMMPoolSyncSkimReentrancyTest is PoolStateFixture {
     function _outerCall(Outer o) internal view returns (address caller, bytes memory data) {
         if (o == Outer.Skim) return (address(this), abi.encodeCall(AMMPool.skim, ()));
         if (o == Outer.Add) {
-            return (alice, abi.encodeCall(AMMPool.addLiquidity, (1e18, 1e19, 0, 0, 0, alice, block.timestamp)));
+            return (alice, abi.encodeCall(AMMPool.addLiquidity, (addParams(1e18, 1e19, 0, alice, block.timestamp))));
         }
         if (o == Outer.Remove) {
             return (alice, abi.encodeCall(AMMPool.removeLiquidity, (1e18, 0, 0, carol, block.timestamp)));
@@ -249,7 +250,7 @@ contract AMMPoolSyncSkimReentrancyTest is PoolStateFixture {
         uint256 t1 = Math.mulDiv(1e18, r1, r0); // token0 cap binds: (1e18, 2e18)
         _armDonation(h0, h1, ReentrantERC20.Hook.TransferFrom);
         vm.prank(alice);
-        (uint256 n0, uint256 n1, uint256 shares) = pool.addLiquidity(1e18, 1e19, 0, 0, 0, alice, block.timestamp);
+        (uint256 n0, uint256 n1, uint256 shares) = pool.addLiquidity(addParams(1e18, 1e19, 0, alice, block.timestamp));
         assertTrue(h0.callbackRan());
         assertEq(n0, 1e18);
         assertEq(n1, t1, "donation not counted as input");

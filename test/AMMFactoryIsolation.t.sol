@@ -6,6 +6,7 @@ import {AMMFactory} from "../src/AMMFactory.sol";
 import {AMMPool} from "../src/AMMPool.sol";
 import {AMMMath} from "../src/libraries/AMMMath.sol";
 import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice F04 — two Factory Pools sharing a token are isolated; F04b — a terminal Pool blocks
 ///         its pair permanently (DECISIONS M7-5).
@@ -35,8 +36,8 @@ contract AMMFactoryIsolationTest is Test {
         _fund(alice);
         _fund(bob);
         vm.startPrank(alice);
-        p1.addLiquidity(1_000_000, 1_000_000, 0, 0, 0, alice, block.timestamp);
-        p2.addLiquidity(3_000_000, 3_000_000, 0, 0, 0, alice, block.timestamp);
+        p1.addLiquidity(addParams(1_000_000, 1_000_000, 0, alice, block.timestamp));
+        p2.addLiquidity(addParams(3_000_000, 3_000_000, 0, alice, block.timestamp));
         vm.stopPrank();
     }
 
@@ -98,7 +99,7 @@ contract AMMFactoryIsolationTest is Test {
     function test_F04_depositSwapWithdrawInP1LeaveP2Unchanged() public {
         State memory before = _state(p2);
         vm.startPrank(bob);
-        (,, uint256 shares) = p1.addLiquidity(50_000, 50_000, 0, 0, 0, bob, block.timestamp);
+        (,, uint256 shares) = p1.addLiquidity(addParams(50_000, 50_000, 0, bob, block.timestamp));
         p1.swapExactInput(address(tA), 20_000, 0, bob, block.timestamp);
         p1.swapExactInput(address(tB), 10_000, 0, bob, block.timestamp);
         p1.removeLiquidity(shares, 0, 0, bob, block.timestamp);

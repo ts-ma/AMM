@@ -12,6 +12,8 @@ import {MockTaxedERC20} from "./mocks/MockTaxedERC20.sol";
 import {MockFailingERC20} from "./mocks/MockFailingERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {AMMPoolSupplyHarness} from "./harness/AMMPoolSupplyHarness.sol";
+import {IAMMPool} from "../src/interfaces/IAMMPool.sol";
+import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
 /// @notice M3: LP ERC-20, initial deposit and the permanent lock.
 ///         TEST_MATRIX L01, L02, L07, L17–L21, L23–L25, P01–P10, R01 (re-run), BI-7, BI-8 (mint part).
@@ -59,7 +61,7 @@ contract AMMPoolLiquidityTest is Test {
         returns (uint256 n0, uint256 n1, uint256 s)
     {
         vm.prank(alice);
-        return p.addLiquidity(a0, a1, 0, 0, minShares, to, block.timestamp);
+        return p.addLiquidity(addParams(a0, a1, minShares, to, block.timestamp));
     }
 
     function _reserves(AMMPool p) internal view returns (uint256 r0, uint256 r1) {
@@ -99,7 +101,7 @@ contract AMMPoolLiquidityTest is Test {
         uint256 amtA = 1_000e18;
         uint256 amtB = 2_000e6;
         vm.prank(alice);
-        p.addLiquidity(aIsToken0 ? amtA : amtB, aIsToken0 ? amtB : amtA, 0, 0, 0, alice, block.timestamp);
+        p.addLiquidity(addParams(aIsToken0 ? amtA : amtB, aIsToken0 ? amtB : amtA, 0, alice, block.timestamp));
         (uint256 r0, uint256 r1) = _reserves(p);
         assertEq(aIsToken0 ? r0 : r1, amtA);
         assertEq(aIsToken0 ? r1 : r0, amtB);
@@ -112,9 +114,9 @@ contract AMMPoolLiquidityTest is Test {
     function test_L02_zeroAmountsRevert() public {
         vm.startPrank(alice);
         vm.expectRevert(AMMPool.ZeroAmount.selector);
-        pool.addLiquidity(0, 1e18, 0, 0, 0, alice, block.timestamp);
+        pool.addLiquidity(addParams(0, 1e18, 0, alice, block.timestamp));
         vm.expectRevert(AMMPool.ZeroAmount.selector);
-        pool.addLiquidity(1e18, 0, 0, 0, 0, alice, block.timestamp);
+        pool.addLiquidity(addParams(1e18, 0, 0, alice, block.timestamp));
         vm.stopPrank();
     }
 
@@ -164,22 +166,23 @@ contract AMMPoolLiquidityTest is Test {
     }
 
     /// @dev Fresh Pool with a 1% U8 taxed token and a plain token; alice deposits 1,000,000 of each.
-    function _taxedDeposit(uint256 hintTaxed, uint256 hintPlain) internal returns (TaxedResult memory res) {
+    ///      M8: the tax hints are gone; the varied inputs are now the pull order and the excess
+    ///      fields, which must not change the initial result either (M8-13 (c)).
+    function _taxedDeposit(bool token1First, uint256 maxExcessTaxed, uint256 maxExcessPlain)
+        internal
+        returns (TaxedResult memory res)
+    {
         MockTaxedERC20 taxed = new MockTaxedERC20("Taxed", "TAX", 18, 100); // 1%
         AMMPool p = _newPool(address(taxed), address(new MockERC20("Plain", "PLN", 18)));
         bool taxedIs0 = p.token0() == address(taxed);
         res.debitTaxed = taxed.balanceOf(alice);
 
         vm.prank(alice);
-        (uint256 n0, uint256 n1, uint256 s) = p.addLiquidity(
-            1_000_000,
-            1_000_000,
-            taxedIs0 ? hintTaxed : hintPlain,
-            taxedIs0 ? hintPlain : hintTaxed,
-            0,
-            alice,
-            block.timestamp
-        );
+        IAMMPool.AddLiquidityParams memory prm =
+            addParamsOrdered(1_000_000, 1_000_000, 0, alice, block.timestamp, token1First);
+        (prm.maxExcess0, prm.maxExcess1) =
+            taxedIs0 ? (maxExcessTaxed, maxExcessPlain) : (maxExcessPlain, maxExcessTaxed);
+        (uint256 n0, uint256 n1, uint256 s) = p.addLiquidity(prm);
         (res.netTaxed, res.netPlain) = taxedIs0 ? (n0, n1) : (n1, n0);
         res.shares = s;
         res.debitTaxed -= taxed.balanceOf(alice);
@@ -190,7 +193,7 @@ contract AMMPoolLiquidityTest is Test {
     }
 
     function test_L19_taxedInitialDepositUsesMeasuredNet() public {
-        TaxedResult memory r = _taxedDeposit(0, 0);
+        TaxedResult memory r = _taxedDeposit(false, type(uint256).max, type(uint256).max);
         assertEq(r.debitTaxed, 1_000_000, "inclusive: sender debited exactly the requested gross");
         assertEq(r.netTaxed, 990_000, "net = gross - floor(gross * 1%)");
         assertEq(r.netPlain, 1_000_000);
@@ -198,20 +201,24 @@ contract AMMPoolLiquidityTest is Test {
         assertEq(r.shares, 994_987 - LOCK, "shares from net, not from requested amounts");
     }
 
-    function test_L19_taxHintsDoNotChangeInitialResult() public {
-        TaxedResult memory a = _taxedDeposit(0, 0);
-        TaxedResult memory b = _taxedDeposit(100, 0); // correct hint
-        TaxedResult memory c = _taxedDeposit(9_999, 5_000); // wrong hints
-        assertEq(keccak256(abi.encode(a)), keccak256(abi.encode(b)));
-        assertEq(keccak256(abi.encode(a)), keccak256(abi.encode(c)));
+    /// @dev Migrated from `test_L19_taxHintsDoNotChangeInitialResult` (M8, TEST_MATRIX §3.3):
+    ///      the property "caller-side inputs other than the amounts do not change the initial
+    ///      result" is kept, with the inputs that exist now.
+    function test_L19_pullOrderAndExcessFieldsDoNotChangeInitialResult() public {
+        TaxedResult memory a = _taxedDeposit(false, type(uint256).max, type(uint256).max);
+        TaxedResult memory b = _taxedDeposit(true, type(uint256).max, type(uint256).max);
+        TaxedResult memory c = _taxedDeposit(false, 0, 0); // excess fields have no effect (M8-13 (c))
+        TaxedResult memory d = _taxedDeposit(true, 0, 0);
+        assertEq(keccak256(abi.encode(a)), keccak256(abi.encode(b)), "pull order");
+        assertEq(keccak256(abi.encode(a)), keccak256(abi.encode(c)), "excess fields");
+        assertEq(keccak256(abi.encode(a)), keccak256(abi.encode(d)), "both");
     }
 
-    function testFuzz_L19_anyValidHintGivesSameShares(uint256 hintTaxed, uint256 hintPlain) public {
-        hintTaxed = bound(hintTaxed, 0, 9_999);
-        hintPlain = bound(hintPlain, 0, 9_999);
-        TaxedResult memory r = _taxedDeposit(hintTaxed, hintPlain);
+    function testFuzz_L19_anyOrderAndExcessFieldsGiveSameShares(bool token1First, uint256 e0, uint256 e1) public {
+        TaxedResult memory r = _taxedDeposit(token1First, e0, e1);
         assertEq(r.shares, 994_987 - LOCK);
         assertEq(r.netTaxed, 990_000);
+        assertEq(r.netPlain, 1_000_000);
     }
 
     // ------------------------------------------------------------------
@@ -245,30 +252,20 @@ contract AMMPoolLiquidityTest is Test {
         vm.warp(deadline + 1);
         vm.prank(alice);
         vm.expectRevert(AMMPool.DeadlineExpired.selector);
-        pool.addLiquidity(4e18, 1e18, 0, 0, 0, alice, deadline);
+        pool.addLiquidity(addParams(4e18, 1e18, 0, alice, deadline));
 
         vm.warp(deadline);
         vm.prank(alice);
-        pool.addLiquidity(4e18, 1e18, 0, 0, 0, alice, deadline); // == deadline succeeds
+        pool.addLiquidity(addParams(4e18, 1e18, 0, alice, deadline)); // == deadline succeeds
         assertEq(pool.totalSupply(), 2e18);
     }
 
     function test_L21_invalidRecipientReverts() public {
         vm.startPrank(alice);
         vm.expectRevert(AMMPool.InvalidRecipient.selector);
-        pool.addLiquidity(4e18, 1e18, 0, 0, 0, address(0), block.timestamp);
+        pool.addLiquidity(addParams(4e18, 1e18, 0, address(0), block.timestamp));
         vm.expectRevert(AMMPool.InvalidRecipient.selector);
-        pool.addLiquidity(4e18, 1e18, 0, 0, 0, address(pool), block.timestamp);
-        vm.stopPrank();
-    }
-
-    function test_L21_L16_taxBpsBoundary() public {
-        vm.startPrank(alice);
-        vm.expectRevert(AMMPool.InvalidTaxBps.selector);
-        pool.addLiquidity(4e18, 1e18, 10_000, 0, 0, alice, block.timestamp);
-        vm.expectRevert(AMMPool.InvalidTaxBps.selector);
-        pool.addLiquidity(4e18, 1e18, 0, 10_000, 0, alice, block.timestamp);
-        pool.addLiquidity(4e18, 1e18, 9_999, 9_999, 0, alice, block.timestamp); // < 10000 accepted
+        pool.addLiquidity(addParams(4e18, 1e18, 0, address(pool), block.timestamp));
         vm.stopPrank();
     }
 
@@ -305,7 +302,7 @@ contract AMMPoolLiquidityTest is Test {
         bad.setMode(MockFailingERC20.Mode.RevertTransferFrom);
         vm.prank(alice);
         vm.expectRevert(MockFailingERC20.MockFailure.selector);
-        p.addLiquidity(4e18, 1e18, 0, 0, 0, alice, block.timestamp);
+        p.addLiquidity(addParams(4e18, 1e18, 0, alice, block.timestamp));
         _assertNothingChanged(p, good, bad);
     }
 
@@ -314,7 +311,7 @@ contract AMMPoolLiquidityTest is Test {
         bad.setMode(MockFailingERC20.Mode.ReturnFalseTransferFrom);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(bad)));
-        p.addLiquidity(4e18, 1e18, 0, 0, 0, alice, block.timestamp);
+        p.addLiquidity(addParams(4e18, 1e18, 0, alice, block.timestamp));
         _assertNothingChanged(p, good, bad);
     }
 
@@ -323,7 +320,7 @@ contract AMMPoolLiquidityTest is Test {
         bad.setMode(MockFailingERC20.Mode.RevertBalanceOf);
         vm.prank(alice);
         vm.expectRevert(MockFailingERC20.MockFailure.selector);
-        p.addLiquidity(4e18, 1e18, 0, 0, 0, alice, block.timestamp);
+        p.addLiquidity(addParams(4e18, 1e18, 0, alice, block.timestamp));
         _assertNothingChanged(p, good, bad);
     }
 
@@ -337,7 +334,7 @@ contract AMMPoolLiquidityTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(pool), 1, 1e18)
         );
-        pool.addLiquidity(4e18, 1e18, 0, 0, 0, dave, block.timestamp);
+        pool.addLiquidity(addParams(4e18, 1e18, 0, dave, block.timestamp));
         vm.stopPrank();
         assertEq(t0.balanceOf(dave), 10e18, "token0 pull rolled back");
         assertEq(t0.allowance(dave, address(pool)), 10e18, "token0 allowance restored");
@@ -352,11 +349,11 @@ contract AMMPoolLiquidityTest is Test {
         ReentrantERC20 evil = new ReentrantERC20("Evil", "EVL", 18);
         MockERC20 good = new MockERC20("Good", "GOOD", 18);
         AMMPool p = _newPool(address(evil), address(good));
-        evil.arm(address(p), abi.encodeCall(AMMPool.addLiquidity, (1e18, 1e18, 0, 0, 0, alice, block.timestamp)));
+        evil.arm(address(p), abi.encodeCall(AMMPool.addLiquidity, (addParams(1e18, 1e18, 0, alice, block.timestamp))));
 
         vm.prank(alice);
         vm.expectRevert(ReentrancyGuardTransient.ReentrancyGuardReentrantCall.selector);
-        p.addLiquidity(4e18, 1e18, 0, 0, 0, alice, block.timestamp);
+        p.addLiquidity(addParams(4e18, 1e18, 0, alice, block.timestamp));
         assertEq(p.totalSupply(), 0);
     }
 
@@ -565,7 +562,7 @@ contract AMMPoolLiquidityTest is Test {
         // is used as the failed supply-changing call instead.)
         vm.prank(alice);
         vm.expectRevert(AMMPool.DeadlineExpired.selector);
-        pool.addLiquidity(a0, a1, 0, 0, 0, alice, block.timestamp - 1);
+        pool.addLiquidity(addParams(a0, a1, 0, alice, block.timestamp - 1));
 
         assertEq(pool.totalSupply(), supply, "BI-8: supply changes only by add/remove");
         assertEq(pool.totalSupply(), LOCK + _userLP(pool), "supply = lock + holders");

@@ -14,6 +14,7 @@ import {MockTaxedERC20} from "./mocks/MockTaxedERC20.sol";
 import {MockNoReturnERC20} from "./mocks/MockNoReturnERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {Wide512} from "./utils/Wide512.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice M5: exact-input swap (ARCHITECTURE §6.4, §6.5, §7.4; DECISIONS M5-1, M5-3, M5-6, M5-7).
 ///         TEST_MATRIX S01–S04, S09–S15, B03, B06 (swap), B07 (swap), X02, Z01, Z06 (swap);
@@ -67,7 +68,7 @@ contract AMMPoolSwapTest is Test {
 
     function _seed(AMMPool p, uint256 a0, uint256 a1) internal returns (uint256 s) {
         vm.prank(alice);
-        (,, s) = p.addLiquidity(a0, a1, 0, 0, 0, alice, block.timestamp);
+        (,, s) = p.addLiquidity(addParams(a0, a1, 0, alice, block.timestamp));
     }
 
     function _swap(AMMPool p, address tokenIn, uint256 amountIn, uint256 minOut) internal returns (uint256) {
@@ -543,7 +544,7 @@ contract AMMPoolSwapTest is Test {
         vm.startPrank(alice);
         t0.approve(address(p), b0);
         t1.approve(address(p), b1);
-        p.addLiquidity(b0, b1, 0, 0, 0, alice, block.timestamp);
+        p.addLiquidity(addParams(b0, b1, 0, alice, block.timestamp));
         vm.stopPrank();
         vm.startPrank(bob);
         t0.approve(address(p), MAX);

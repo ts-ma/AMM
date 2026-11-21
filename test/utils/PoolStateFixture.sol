@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AMMPool} from "../../src/AMMPool.sol";
 import {MockDeficitERC20} from "../mocks/MockDeficitERC20.sol";
+import {addParams} from "./AddParams.sol";
 
 /// @notice Shared M6 fixture: a Pool over two `MockDeficitERC20` tokens (standard transfers,
 ///         balances slashable to create a deficit), funded actors, and a full-state snapshot
@@ -43,7 +44,7 @@ abstract contract PoolStateFixture is Test {
 
     function _seed(uint256 a0, uint256 a1) internal returns (uint256 s) {
         vm.prank(alice);
-        (,, s) = pool.addLiquidity(a0, a1, 0, 0, 0, alice, block.timestamp);
+        (,, s) = pool.addLiquidity(addParams(a0, a1, 0, alice, block.timestamp));
     }
 
     /// @dev Creates surplus by a direct transfer from a third party.

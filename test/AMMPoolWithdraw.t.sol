@@ -9,6 +9,7 @@ import {AMMPool} from "../src/AMMPool.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFailingERC20} from "./mocks/MockFailingERC20.sol";
 import {MockOverDebitERC20} from "./mocks/MockOverDebitERC20.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice M4: proportional withdrawal with MIN-NET and A8 (ARCHITECTURE §6.3, §7.3; DECISIONS M4-3–M4-5).
 ///         TEST_MATRIX W01–W06, W08–W11, B02, B06, B07, P03 (burn part), Z06 (redemption), Z07.
@@ -57,7 +58,7 @@ contract AMMPoolWithdrawTest is Test {
 
     function _add(AMMPool p, address from, uint256 a0, uint256 a1) internal returns (uint256 s) {
         vm.prank(from);
-        (,, s) = p.addLiquidity(a0, a1, 0, 0, 0, from, block.timestamp);
+        (,, s) = p.addLiquidity(addParams(a0, a1, 0, from, block.timestamp));
     }
 
     function _remove(AMMPool p, address from, uint256 shares, uint256 m0, uint256 m1, address to)

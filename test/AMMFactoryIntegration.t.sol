@@ -9,6 +9,7 @@ import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {PoolStateFixture} from "./utils/PoolStateFixture.sol";
+import {addParams} from "./utils/AddParams.sol";
 
 /// @notice F06 — Factory integration (DECISIONS M7-6). Representative M2–M6 flows on a
 ///         Factory-deployed Pool, a differential run against a directly deployed reference Pool,
@@ -37,7 +38,7 @@ contract AMMFactoryIntegrationTest is PoolStateFixture {
         _approve(alice, ref);
         _approve(bob, ref);
         vm.prank(alice);
-        ref.addLiquidity(1_000_000, 2_000_000, 0, 0, 0, alice, block.timestamp);
+        ref.addLiquidity(addParams(1_000_000, 2_000_000, 0, alice, block.timestamp));
     }
 
     function _approve(address who, AMMPool p) internal {
@@ -77,7 +78,7 @@ contract AMMFactoryIntegrationTest is PoolStateFixture {
     ///      observable result in order.
     function _scenario(AMMPool p) internal returns (uint256[12] memory o) {
         vm.startPrank(bob);
-        (o[0], o[1], o[2]) = p.addLiquidity(1_000, 5_000, 0, 0, 0, bob, block.timestamp);
+        (o[0], o[1], o[2]) = p.addLiquidity(addParams(1_000, 5_000, 0, bob, block.timestamp));
         o[3] = p.swapExactInput(address(t0), 10_000, 0, carol, block.timestamp);
         o[4] = p.swapExactInput(address(t1), 7_000, 0, carol, block.timestamp);
         o[5] = p.getAmountOut(address(t0), 1_234);
@@ -149,7 +150,7 @@ contract AMMFactoryIntegrationTest is PoolStateFixture {
 
         _expectRevertNoChange(
             bob,
-            abi.encodeCall(pool.addLiquidity, (1_000, 2_000, 0, 0, 0, bob, block.timestamp)),
+            abi.encodeCall(pool.addLiquidity, (addParams(1_000, 2_000, 0, bob, block.timestamp))),
             abi.encodeWithSelector(AMMMath.InsufficientLiquidity.selector)
         );
 
@@ -174,7 +175,7 @@ contract AMMFactoryIntegrationTest is PoolStateFixture {
         vm.startPrank(alice);
         r.approve(address(p), MAX);
         m.approve(address(p), MAX);
-        p.addLiquidity(1e21, 1e21, 0, 0, 0, alice, block.timestamp);
+        p.addLiquidity(addParams(1e21, 1e21, 0, alice, block.timestamp));
         vm.stopPrank();
 
         r.armWith(

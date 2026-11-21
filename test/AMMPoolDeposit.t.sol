@@ -8,10 +8,11 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {AMMPool} from "../src/AMMPool.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFailingERC20} from "./mocks/MockFailingERC20.sol";
+import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
 /// @notice M4: Tier 0 later deposits (ARCHITECTURE §6.2 with t = 0; DECISIONS M4-1, M4-2).
-///         TEST_MATRIX L03, L04, L06, L08, L11, L12, L14, L26, L27, B01 (later path),
-///         Z06 (L-α target), Z07 (deposit business boundaries).
+///         TEST_MATRIX L03, L04, L06, L08, L11, L12, L14, L26 (M8: measured net), B01 (later path),
+///         Z06 (step-2 target), Z07 (deposit business boundaries). L27 retired in M8.
 ///         Every revert asserts the exact error (DECISIONS M4-8).
 contract AMMPoolDepositTest is Test {
     uint256 internal constant LOCK = 1000;
@@ -58,7 +59,7 @@ contract AMMPoolDepositTest is Test {
         returns (uint256 n0, uint256 n1, uint256 s)
     {
         vm.prank(from);
-        return p.addLiquidity(a0, a1, 0, 0, minShares, to, block.timestamp);
+        return p.addLiquidity(addParams(a0, a1, minShares, to, block.timestamp));
     }
 
     /// @dev Independent reference for §6.2 with t = 0 (plain arithmetic; callers keep products
@@ -208,7 +209,7 @@ contract AMMPoolDepositTest is Test {
                 x0 == 0 || x1 == 0 ? AMMPool.InsufficientDepositAmount.selector : AMMPool.InsufficientShares.selector
             );
             vm.prank(bob);
-            pool.addLiquidity(c0, c1, 0, 0, 0, bob, block.timestamp);
+            pool.addLiquidity(addParams(c0, c1, 0, bob, block.timestamp));
             _assertSame(_snap(pool, bob), b);
             return;
         }
@@ -249,7 +250,7 @@ contract AMMPoolDepositTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(pool), 1, 200e18)
         );
-        pool.addLiquidity(100e18, 300e18, 0, 0, 0, bob, block.timestamp);
+        pool.addLiquidity(addParams(100e18, 300e18, 0, bob, block.timestamp));
         _assertSame(_snap(pool, bob), b);
     }
 
@@ -265,7 +266,7 @@ contract AMMPoolDepositTest is Test {
         Snap memory b = _snap(pool, dave);
         vm.prank(dave);
         vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, dave, 199e18, 200e18));
-        pool.addLiquidity(100e18, 300e18, 0, 0, 0, dave, block.timestamp);
+        pool.addLiquidity(addParams(100e18, 300e18, 0, dave, block.timestamp));
         _assertSame(_snap(pool, dave), b);
     }
 
@@ -285,7 +286,7 @@ contract AMMPoolDepositTest is Test {
         bad.setMode(MockFailingERC20.Mode.RevertTransferFrom);
         vm.prank(bob);
         vm.expectRevert(MockFailingERC20.MockFailure.selector);
-        p.addLiquidity(100e18, 300e18, 0, 0, 0, bob, block.timestamp);
+        p.addLiquidity(addParams(100e18, 300e18, 0, bob, block.timestamp));
         bad.setMode(MockFailingERC20.Mode.None);
         _assertSame(_snap(p, bob), b);
     }
@@ -296,7 +297,7 @@ contract AMMPoolDepositTest is Test {
         bad.setMode(MockFailingERC20.Mode.ReturnFalseTransferFrom);
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(bad)));
-        p.addLiquidity(100e18, 300e18, 0, 0, 0, bob, block.timestamp);
+        p.addLiquidity(addParams(100e18, 300e18, 0, bob, block.timestamp));
         bad.setMode(MockFailingERC20.Mode.None);
         _assertSame(_snap(p, bob), b);
     }
@@ -310,7 +311,7 @@ contract AMMPoolDepositTest is Test {
         Snap memory b = _snap(pool, bob);
         vm.prank(bob);
         vm.expectRevert(AMMPool.InsufficientShares.selector);
-        pool.addLiquidity(100, 300, 0, 0, 142, bob, block.timestamp);
+        pool.addLiquidity(addParams(100, 300, 142, bob, block.timestamp));
         _assertSame(_snap(pool, bob), b);
         (,, uint256 s) = _add(pool, bob, 100, 300, 141, bob);
         assertEq(s, 141);
@@ -321,9 +322,9 @@ contract AMMPoolDepositTest is Test {
         vm.warp(1000);
         vm.prank(bob);
         vm.expectRevert(AMMPool.DeadlineExpired.selector);
-        pool.addLiquidity(100e18, 300e18, 0, 0, 0, bob, 999);
+        pool.addLiquidity(addParams(100e18, 300e18, 0, bob, 999));
         vm.prank(bob);
-        pool.addLiquidity(100e18, 300e18, 0, 0, 0, bob, 1000);
+        pool.addLiquidity(addParams(100e18, 300e18, 0, bob, 1000));
         assertGt(pool.balanceOf(bob), 0);
     }
 
@@ -335,9 +336,9 @@ contract AMMPoolDepositTest is Test {
         _add(pool, alice, 1000e18, 2000e18, 0, alice);
         vm.startPrank(bob);
         vm.expectRevert(AMMPool.InvalidRecipient.selector);
-        pool.addLiquidity(100e18, 300e18, 0, 0, 0, address(0), block.timestamp);
+        pool.addLiquidity(addParams(100e18, 300e18, 0, address(0), block.timestamp));
         vm.expectRevert(AMMPool.InvalidRecipient.selector);
-        pool.addLiquidity(100e18, 300e18, 0, 0, 0, address(pool), block.timestamp);
+        pool.addLiquidity(addParams(100e18, 300e18, 0, address(pool), block.timestamp));
         vm.stopPrank();
     }
 
@@ -354,60 +355,62 @@ contract AMMPoolDepositTest is Test {
     }
 
     // ------------------------------------------------------------------
-    // L26 — taxed token with hint 0 is rejected by the [T, T + 1] check
+    // L26 — M8: a taxed token on a later deposit is accepted and accounted by measured net
+    // (replaces the pre-M8 `[T, T + 1]` rejection; TEST_MATRIX §3.3)
     // ------------------------------------------------------------------
 
-    /// @dev Taxed token placed explicitly as token0 and as token1, so each side's check is exercised.
-    function test_L26_taxedToken0WithZeroHintReverts() public {
-        _taxedZeroHintReverts(address(0x10000)); // low address: token0
+    /// @dev Taxed token placed explicitly as token0 and as token1, each with both pull orders.
+    ///      Kept security property (from the old L26): a short delivery never earns shares for
+    ///      tokens that did not arrive. Now shown positively: shares come from the measured nets.
+    function test_L26_taxedToken0LaterDepositUsesMeasuredNet() public {
+        _taxedLaterDeposit(address(0x10000), false); // low address: token0
+        _taxedLaterDeposit(address(0x10001), true);
     }
 
-    function test_L26_taxedToken1WithZeroHintReverts() public {
-        _taxedZeroHintReverts(address(type(uint160).max)); // highest address: token1
+    function test_L26_taxedToken1LaterDepositUsesMeasuredNet() public {
+        _taxedLaterDeposit(address(type(uint160).max), false); // highest address: token1
+        _taxedLaterDeposit(address(type(uint160).max - 1), true);
     }
 
-    function _taxedZeroHintReverts(address taxedAt) internal {
+    function _taxedLaterDeposit(address taxedAt, bool token1First) internal {
         deployCodeTo("MockTaxedERC20.sol:MockTaxedERC20", abi.encode("Taxed", "TAX", uint8(18), uint256(100)), taxedAt);
         MockERC20 plain = new MockERC20("Plain", "PLN", 18);
         AMMPool p = _newPool(taxedAt, address(plain));
-        assertEq(taxedAt == address(0x10000) ? p.token0() : p.token1(), taxedAt, "taxed token position");
-        _add(p, alice, 1000e18, 2000e18, 0, alice); // initial path accepts taxed tokens (M3, L19)
+        bool taxedIs0 = p.token0() == taxedAt;
+        assertEq(taxedIs0 ? p.token0() : p.token1(), taxedAt, "taxed token position");
+        _add(p, alice, 1000e18, 2000e18, 0, alice);
         Snap memory b = _snap(p, bob);
+
         vm.prank(bob);
-        vm.expectRevert(AMMPool.NetAmountOutOfRange.selector);
-        p.addLiquidity(100e18, 300e18, 0, 0, 0, bob, block.timestamp);
-        _assertSame(_snap(p, bob), b);
+        (uint256 n0, uint256 n1, uint256 s) =
+            p.addLiquidity(addParamsOrdered(100e18, 300e18, 0, bob, block.timestamp, token1First));
+        Snap memory a = _snap(p, bob);
+
+        // Measured: the returned nets are the Pool's balance increases, in token0/token1 order.
+        assertEq(n0, a.pool0 - b.pool0, "net0 = pool token0 increase");
+        assertEq(n1, a.pool1 - b.pool1, "net1 = pool token1 increase");
+        // The taxed side really arrived short of its step-2 target (T = (100e18, 200e18)).
+        assertLt(taxedIs0 ? n0 : n1, taxedIs0 ? 100e18 : 200e18, "taxed side short");
+        // X1: reserves grow by the measured nets.
+        assertEq(a.r0, b.r0 + n0, "reserve0 += net0");
+        assertEq(a.r1, b.r1 + n1, "reserve1 += net1");
+        // Shares from measured nets only (values are small: no overflow in the reference).
+        uint256 s0 = n0 * b.supply / b.r0;
+        uint256 s1 = n1 * b.supply / b.r1;
+        assertEq(s, s0 < s1 ? s0 : s1, "shares = min(floor(n_i * S / r_i))");
+        assertEq(a.callerLP - b.callerLP, s, "bob received the shares");
+        assertEq(a.supply, b.supply + s);
+        // Existing LPs' per-share reserves never decrease.
+        assertGe(a.r0 * b.supply, b.r0 * a.supply, "per-share reserve0");
+        assertGe(a.r1 * b.supply, b.r1 * a.supply, "per-share reserve1");
     }
 
     // ------------------------------------------------------------------
-    // L27 — TEMPORARY (DECISIONS M4-1): non-zero hint on a later deposit. Removed in M8.
+    // L27 — retired in M8 (TEST_MATRIX §3.3): the tax-hint parameters and the temporary
+    // TaxedLaterDepositNotImplemented / InvalidTaxBps errors no longer exist (L30 proves their
+    // absence from the ABI). The initial-path property "caller inputs other than the amounts
+    // do not change the result" is kept by L19 (pull order and excess fields).
     // ------------------------------------------------------------------
-
-    function test_L27_nonZeroHintOnLaterDepositRevertsBeforeAnyTransfer() public {
-        _add(pool, alice, 1000e18, 2000e18, 0, alice);
-        Snap memory b = _snap(pool, bob);
-        uint256[2][3] memory hints =
-            [[uint256(1), uint256(0)], [uint256(0), uint256(1)], [uint256(9999), uint256(9999)]];
-        for (uint256 i; i < 3; ++i) {
-            vm.prank(bob);
-            vm.expectRevert(AMMPool.TaxedLaterDepositNotImplemented.selector);
-            pool.addLiquidity(100e18, 300e18, hints[i][0], hints[i][1], 0, bob, block.timestamp);
-        }
-        _assertSame(_snap(pool, bob), b);
-        // The hint range check still comes first (M3-4 order).
-        vm.prank(bob);
-        vm.expectRevert(AMMPool.InvalidTaxBps.selector);
-        pool.addLiquidity(100e18, 300e18, 10_000, 0, 0, bob, block.timestamp);
-    }
-
-    /// @dev The initial path is unchanged: non-zero hints are validated and ignored (M3, U9 option i).
-    function test_L27_initialPathStillIgnoresHints() public {
-        vm.prank(alice);
-        (uint256 n0, uint256 n1, uint256 s) = pool.addLiquidity(4e18, 1e18, 500, 9999, 0, alice, block.timestamp);
-        assertEq(n0, 4e18);
-        assertEq(n1, 1e18);
-        assertEq(s, 2e18 - LOCK);
-    }
 
     // ------------------------------------------------------------------
     // B01 (later path) — pre-existing surplus is not attributed and stays unchanged (BI-2)
@@ -441,7 +444,7 @@ contract AMMPoolDepositTest is Test {
         Snap memory b = _snap(pool, bob);
         vm.prank(bob);
         vm.expectRevert(AMMPool.InsufficientDepositAmount.selector);
-        pool.addLiquidity(1999, 1, 0, 0, 0, bob, block.timestamp);
+        pool.addLiquidity(addParams(1999, 1, 0, bob, block.timestamp));
         _assertSame(_snap(pool, bob), b);
         (uint256 n0, uint256 n1, uint256 s) = _add(pool, bob, 2000, 1, 0, bob);
         assertEq(n0, 2000);
@@ -454,7 +457,7 @@ contract AMMPoolDepositTest is Test {
         _add(pool, alice, 1000, 2e6, 0, alice);
         vm.prank(bob);
         vm.expectRevert(AMMPool.InsufficientDepositAmount.selector);
-        pool.addLiquidity(1e18, 1999, 0, 0, 0, bob, block.timestamp);
+        pool.addLiquidity(addParams(1e18, 1999, 0, bob, block.timestamp));
         (uint256 n0, uint256 n1,) = _add(pool, bob, 1e18, 2000, 0, bob);
         assertEq(n0, 1);
         assertEq(n1, 2000);
@@ -468,7 +471,7 @@ contract AMMPoolDepositTest is Test {
         Snap memory b = _snap(pool, bob);
         vm.prank(bob);
         vm.expectRevert(AMMPool.InsufficientShares.selector);
-        pool.addLiquidity(1, 1, 0, 0, 0, bob, block.timestamp);
+        pool.addLiquidity(addParams(1, 1, 0, bob, block.timestamp));
         _assertSame(_snap(pool, bob), b);
         // One more unit of each makes shares = min(2, 1) = 1.
         (,, uint256 s) = _add(pool, bob, 2, 2, 0, bob);
@@ -491,13 +494,13 @@ contract AMMPoolDepositTest is Test {
         uint256 inside = 2 ** 255 - 1;
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, bob, FUND, 2 * inside));
-        pool.addLiquidity(inside, type(uint256).max, 0, 0, 0, bob, block.timestamp);
+        pool.addLiquidity(addParams(inside, type(uint256).max, 0, bob, block.timestamp));
 
         vm.prank(bob);
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, bob, FUND, type(uint256).max)
         );
-        pool.addLiquidity(inside + 1, type(uint256).max, 0, 0, 0, bob, block.timestamp);
+        pool.addLiquidity(addParams(inside + 1, type(uint256).max, 0, bob, block.timestamp));
         _assertSame(_snap(pool, bob), b);
     }
 

@@ -7,6 +7,8 @@ import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/Reentrancy
 import {AMMPool} from "../src/AMMPool.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
+import {IAMMPool} from "../src/interfaces/IAMMPool.sol";
+import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
 /// @dev Callback target for X05: reads the Pool's views while a Pool call is in progress.
 contract ReserveProbe {
@@ -29,7 +31,8 @@ contract ReserveProbe {
 ///         (i)   Bubbling: inner re-entry reverts, outer call reverts, all relevant state unchanged;
 ///         (ii)  Caught + correct transfer: inner re-entry reverts and is swallowed; the outer call
 ///               succeeds and its end state is IDENTICAL to a run without any re-entry attempt;
-///         (iii) Caught + faulty transfer: the outer call is rejected by A8, MIN-NET or [T, T+1].
+///         (iii) Caught + faulty transfer: the outer call is rejected by A8, MIN-NET or (M8)
+///               the excess bound, or a short add is accounted by measured net.
 ///         The attacker (the token contract itself) is funded with both tokens, approvals and LP,
 ///         so every re-entrant call would succeed if the guard were missing.
 contract AMMPoolReentrancyTest is Test {
@@ -67,11 +70,11 @@ contract AMMPoolReentrancyTest is Test {
             vm.stopPrank();
         }
         vm.prank(alice);
-        pool.addLiquidity(1e21, 1e21, 0, 0, 0, alice, block.timestamp);
+        pool.addLiquidity(addParams(1e21, 1e21, 0, alice, block.timestamp));
         vm.prank(bob);
-        pool.addLiquidity(1e20, 1e20, 0, 0, 0, bob, block.timestamp);
+        pool.addLiquidity(addParams(1e20, 1e20, 0, bob, block.timestamp));
         vm.prank(attacker);
-        pool.addLiquidity(1e20, 1e20, 0, 0, 0, attacker, block.timestamp);
+        pool.addLiquidity(addParams(1e20, 1e20, 0, attacker, block.timestamp));
     }
 
     // ------------------------------------------------------------------
@@ -92,13 +95,13 @@ contract AMMPoolReentrancyTest is Test {
     }
 
     function _add() internal view returns (bytes memory) {
-        return abi.encodeCall(AMMPool.addLiquidity, (1e18, 1e18, 0, 0, 0, bob, block.timestamp));
+        return abi.encodeCall(AMMPool.addLiquidity, (addParams(1e18, 1e18, 0, bob, block.timestamp)));
     }
 
     /// @dev Re-entrant calls made by the token (msg.sender = attacker).
     function _payloads() internal view returns (bytes[3] memory p) {
         p[0] = abi.encodeCall(AMMPool.swapExactInput, (address(m), 1e15, 0, attacker, block.timestamp));
-        p[1] = abi.encodeCall(AMMPool.addLiquidity, (1e18, 1e18, 0, 0, 0, attacker, block.timestamp));
+        p[1] = abi.encodeCall(AMMPool.addLiquidity, (addParams(1e18, 1e18, 0, attacker, block.timestamp)));
         p[2] = abi.encodeCall(AMMPool.removeLiquidity, (1e18, 0, 0, attacker, block.timestamp));
     }
 
@@ -323,9 +326,41 @@ contract AMMPoolReentrancyTest is Test {
         }
     }
 
-    function test_X01_add_caughtFaulty_shortInputRejectedByNetRange() public {
+    /// @dev Migrated in M8 (TEST_MATRIX §3.3) from `test_X01_add_caughtFaulty_shortInputRejectedByNetRange`.
+    ///      The `[T, T + 1]` check no longer exists; the kept property is "a short hook-token
+    ///      delivery during a caught re-entry never earns shares for tokens that did not arrive".
+    ///      (a) With unbounded excess the call succeeds and is accounted by measured net.
+    function test_X01_add_caughtFaulty_shortInputAccountedByMeasuredNet() public {
+        r.setFaults(0, 2);
+        Snap memory b = _snap();
+        r.armWith(address(pool), _payloads()[0], ReentrantERC20.Hook.TransferFrom, true);
+        vm.prank(bob);
+        (uint256 n0, uint256 n1, uint256 s) = pool.addLiquidity(addParams(1e18, 1e18, 0, bob, block.timestamp));
+        Snap memory a = _snap();
+        assertTrue(r.callbackRan(), "re-entry was attempted");
+        assertEq(r.lastReturnData(), reentrantErr, "re-entry hit the guard");
+        bool rIs0 = pool.token0() == address(r);
+        assertEq(rIs0 ? n0 : n1, 1e18 - 2, "hook token arrived 2 short and is counted as such");
+        assertEq(a.r0, b.r0 + n0);
+        assertEq(a.r1, b.r1 + n1);
+        uint256 s0 = n0 * b.supply / b.r0;
+        uint256 s1 = n1 * b.supply / b.r1;
+        assertEq(s, s0 < s1 ? s0 : s1, "shares from measured nets");
+        assertEq(a.lp[2] - b.lp[2], s);
+    }
+
+    /// @dev (b) Hook token pulled second, zero excess allowed: the plain token's 2 unmatched units
+    ///      exceed maxExcess = 0, so the Pool's own check rejects the call with full rollback.
+    function test_X01_add_caughtFaulty_shortInputRejectedByExcessBound() public {
+        IAMMPool.AddLiquidityParams memory prm =
+            addParamsOrdered(1e18, 1e18, 0, bob, block.timestamp, pool.token0() == address(r));
+        (prm.maxExcess0, prm.maxExcess1) = (0, 0);
         _caughtFaulty(
-            _add(), ReentrantERC20.Hook.TransferFrom, 0, 2, abi.encodeWithSelector(AMMPool.NetAmountOutOfRange.selector)
+            abi.encodeCall(AMMPool.addLiquidity, (prm)),
+            ReentrantERC20.Hook.TransferFrom,
+            0,
+            2,
+            abi.encodeWithSelector(AMMPool.ExcessContributionTooHigh.selector)
         );
     }
 
