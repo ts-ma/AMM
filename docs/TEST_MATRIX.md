@@ -105,12 +105,27 @@ Plan only. IDs are final once the M8 decisions commit is made. Every revert asse
 | L42 | Re-planned second target is 0 → `InsufficientDepositAmount()` before the second `transferFrom` (DECISIONS M8-8): (i) the first token's measured net is 0 (100% tax mock); (ii) the first net is > 0 but the re-plan floors to 0; (iii) both cases with each pull order; (iv) full rollback: the first transfer's balance changes, reserves, supply and payer balances are restored; the second token's `transferFrom` is never called; (v) the exact error selector is asserted | `NOT IMPLEMENTED` |
 | L43 | Canonical token order: with `token1First = true` and `false`, the return values `net0`/`net1` and the `LiquidityAdded` arguments are token0's and token1's measured nets, not first/second pulled | `NOT IMPLEMENTED` |
 | L41 | JIT capture of a victim's excess (T29): add before, remove after; the capture is bounded by the victim's `maxExcess` | `NOT IMPLEMENTED` |
-| Z08 | Saturating arithmetic (M8-4): (i) one side's `n·S/r` ≥ 2^256, the other side fits → `σ` = the smaller side, proceeds; (ii) both sides saturate → checked `supply + σ` reverts Panic `0x11` before any other post-transfer check; (iii) one side saturates, the other is exactly `2^256 − 1` → Panic `0x11`; (iv) re-plan saturates → request equals the request cap; 512-bit differential oracle over `[1, 2^256 − 1]` | `NOT IMPLEMENTED` |
+| Z08 | Saturating arithmetic (M8-4): (i) one side's `n·S/r` ≥ 2^256, the other side fits → `σ` = the smaller side, proceeds; (ii) both sides saturate (`σ = max`) → Panic `0x11` from the checked `supply + σ`, unless `InCallBalanceLoss` or `PayerDebitTooHigh` fails first (asserted separately); `InsufficientShares` cannot fire here; (iii) one side saturates, the other is exactly `2^256 − 1` → same as (ii); (iii-b) `σ` in `(max − S, max)` with `minShares > σ` → `InsufficientShares`, with `minShares ≤ σ` → Panic `0x11`; in no case is `ExcessContributionTooHigh` reported or a share minted; (iv) re-plan saturates → request equals the request cap; 512-bit differential oracle over `[1, 2^256 − 1]` | `NOT IMPLEMENTED` |
 | Z09 | Fuzz: per-share reserves never decrease; BI-2′; debit `≤ maxDebit`; `u ≤ maxExcess`; random tax per transfer in `[0, 9999]`, reserves `[10^3, 2^112]`, requests `[1, 2^112]`, mixed 6/18 decimals | `NOT IMPLEMENTED` |
 | X06 | Trapped-liquidity limitation (THREAT_MODEL §7.6), modes (A) outbound-only refusal, (B) all transfers revert, (C) `balanceOf` reverts: remove fails; in (A) X → Y swaps and new deposits still succeed, Y → X fails; repeated X → Y swaps drain Y and the LPs' redeemable value is recorded; restoring X makes exit work again | `NOT IMPLEMENTED` |
 | X07 | Tax changes between deposit and withdrawal: an inclusive increase never triggers A8, MIN-NET decides; an outbound over-debit enabled after deposit → `OutboundTransferMismatch` (A8) | `NOT IMPLEMENTED` |
 
+Test-method rules (student review, 2026-11-21):
+
+- "Random" tax is reproducible: an explicit seed drives a deterministic pseudo-random sequence (`keccak256(seed, nonce)`), and an explicit FIFO schedule gives predictable boundary values. No environment randomness. A failing fuzz case can be replayed from its seed.
+- Every mock has its own self-tests before it is used against the Pool: payer debit, recipient credit, who bears an inclusive fee, where an exclusive extra charge is taken, and full balance restore after a failed transfer.
+- "Not called" assertions (L42) use both `vm.expectCall(..., 0)` and a tripwire: the guarded token reverts with a mock-only error (`MockFailure()`) if it is called, so a wrong path cannot be mistaken for the Pool's own `InsufficientDepositAmount()`.
+- Each `token1First` path is tested separately for: one token taxed, both taxed, random tax, and failure rollback (L31–L35, L42, Z09 run with both values); L43 checks that `net0`/`net1` are token0's/token1's.
+- L36 keeps the `maxExcess` boundary; L42 checks full rollback; L43 checks the canonical token order.
+- X06/X07 are **limitation tests**: they document behaviour outside the supported model (trapped liquidity, A8 refusal) and never describe the inability to exit as supported.
+- Migration of the existing tests (commit 2 of M8): every existing test calling the old `addLiquidity` or using a removed error is listed in §3.3 as kept, modified, replaced or retired, with the reason. A security test is never deleted only because its old parameters no longer exist; its property is re-tested under the new ABI or the retirement is justified.
+- Commits 2–4 of M8 (struct ABI, `maxDebit`, BI-2′) are work in progress. The first functional acceptance happens only after commit 4, with the full suite passing.
+
 Mocks: variable / random tax with separate inbound and outbound settings, including 100%; exclusive extra charge (inbound and outbound separately, switchable after deposit); bonus (credits more than sent); cross-token hook (`ReentrantERC20` + `MockDeficitERC20.slash` on the Pool or on the payer); `MockFailingERC20` gains an additive "all transfers revert" mode for X06 (B), while the existing `RevertTransfer` and `RevertBalanceOf` modes cover (A) and (C).
+
+### 3.3 M8 migration map of existing tests
+
+Filled in M8 commit 2: one row per existing test that calls the old `addLiquidity` or expects a removed error (`InvalidTaxBps`, `TaxedLaterDepositNotImplemented`, `NetAmountOutOfRange`), with the outcome (kept / modified / replaced / retired) and the reason.
 
 ## 4. Withdrawal (M4, M5, M8)
 
