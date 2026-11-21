@@ -90,7 +90,7 @@ Plan only. IDs are final once the M8 decisions commit is made. Every revert asse
 |---|---|---|
 | L30 | Interface (M8-5): new `addLiquidity` selector equals the approved struct signature, old selector absent; `LiquidityAdded` topic unchanged; X03 still 22 entries with exactly one approved replacement; `TaxedLaterDepositNotImplemented` / `NetAmountOutOfRange` absent from `src/` and the compiled ABI; map of each removed L26/L27 test to its replacing functional test | `PASSED` (M8 commit 2) — `test_L30_removedErrorsAbsentFromCompiledAbi`, `test_L30_liquidityAddedEventUnchanged`; selector and X03 parts: `test_X03_static_addLiquidityReplaced`, `test_X03_runtime_oldAddLiquiditySelectorFails`; mapping: §3.3 |
 | L31 | First token delivers **less** than requested (taxed first token): the second request is re-planned from the measured net; the worked numbers of REPORT_NOTES §1.5 | `NOT IMPLEMENTED` |
-| L32 | First token delivers **more** than requested (bonus token): re-plan capped by the second token's request cap; this covers the `min(...)` branch, so a mutant removing it is a test gap, not an equivalent mutant | `NOT IMPLEMENTED` |
+| L32 | First token delivers **more** than requested (bonus token): re-plan capped by the second token's request cap; this covers the `min(...)` branch, so a mutant removing it is a test gap, not an equivalent mutant | `PASSED` (M8 commit 5a) — `test/AMMPoolReplan.t.sol`: `test_L32_bonusFirst_upwardReplanCappedByRequestMax` (caps unbounded / binding / equal to the step-2 target, both positions), `test_L32_bonusFirst_cappedReplanExcessBoundedByMaxExcess`, `test_L32_bonusSecond_noReplan_bonusIsExcess`. Mutation: removing the `min(cap, …)` (R1/R2) survives every pre-5a test and is killed by L32 |
 | L33 | Both tokens taxed (fixed, unknown to the Pool), with each pull order | `NOT IMPLEMENTED` |
 | L34 | Token0-first vs. token1-first on the same state: different unmatched amounts as predicted by the model; shares from measured net in both | `NOT IMPLEMENTED` |
 | L35 | Second token delivers **zero** (100% tax mock): `σ == 0` → `InsufficientShares`, full rollback | `NOT IMPLEMENTED` |
@@ -196,6 +196,8 @@ Mutation (commit 4; per-file backup and restore, hash identical afterwards; run 
 | M7 payer check before the balance check | killed (`test_L40_inCallBalanceLossBeforePayerDebitTooHigh_allCases`) |
 
 Gas: **not measured** (G05 pending); commit 4 adds four `balanceOf` STATICCALLs per deposit. A candidate optimisation for G05 is to reuse the second pull's after-reading for the second token. `forge build --sizes`: AMMPool runtime 10,553 B (margin 14,023 B), initcode 11,709 B (margin 37,443 B).
+
+M8 commit 5 (tests only; M8 remains WIP). 5a: L32 and Z08 (iv) (`test_Z08iv_replanSaturates_requestIsCap`). Re-plan mutation (per-file backup and restore, hash identical; run against `AMMPoolReplan` + `AMMPoolMeasuredDeposit`): R1/R2 cap removed, killed (3 tests; they survive the older tests); R3/R4 `mulDiv` instead of saturating, killed (Z08 (iv)); R5/R6 re-plan only downward, killed (3); R7/R8 no re-plan, killed (6).
 
 ## 4. Withdrawal (M4, M5, M8)
 
