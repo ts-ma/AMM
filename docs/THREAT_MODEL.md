@@ -1,8 +1,8 @@
 # THREAT MODEL — AMM Security Threat Model
 
-**Last updated:** 2026-11-20
+**Last updated:** 2026-11-21
 
-**Status:** Partially implemented. Implemented and tested so far (M2–M7): constructor checks (T11); `nonReentrant` on `addLiquidity`, `removeLiquidity` and `swapExactInput` with the M5 attack suite — same-function and cross-function, bubbling and caught re-entry (T1); measured input on deposits and swaps (T2, T5 — taxed inputs fully tested only in M8); exact swap formula with the fee-adjusted inequality, enforced by tests only (T8, A9 = DECISIONS M5-9); the lock and LP-SELF supply controls (T10, T24); MIN-NET on withdrawal and swap (T7); read-only reentrancy demonstrated, no view guard (T13); recipient checks on add, remove and swap (T14); `minNetAmountOut` and deadline on swap (T18); full rollback on failing/false-returning tokens, no-return tokens accepted (T20); ownerless ABI verified statically and at run time (T21); A8 on withdrawal, swap and skim (T23). M6: downward-only `sync()` (T3), deficit entry check on add, remove and swap (T9), per-token `skim()` to the immutable recipient with A8 (T12, T15, T16 Pool side), terminal-pool rules after a zero reserve (T25), `nonReentrant` on `sync` / `skim` with the bubbling / caught suite (T1). M7: Factory registry — sorting, zero / identical / duplicate rejection in both orders, code-existence check in the Factory only (T17); shared immutable recipient (T11); Factory ownerless, no payable entry point, no token-withdrawal function (T21); terminal pairs blocked (T25). Still open: Tier 1 taxed tokens (M8). **All other mitigations below are unimplemented and untested.** A mitigation reduces risk; it does not mean the attack is eliminated. Passing tests is not a proof of security.
+**Status:** Partially implemented. Implemented and tested so far (M2–M7): constructor checks (T11); `nonReentrant` on `addLiquidity`, `removeLiquidity` and `swapExactInput` with the M5 attack suite — same-function and cross-function, bubbling and caught re-entry (T1); measured input on deposits and swaps (T2, T5 — taxed inputs fully tested only in M8); exact swap formula with the fee-adjusted inequality, enforced by tests only (T8, A9 = DECISIONS M5-9); the lock and LP-SELF supply controls (T10, T24); MIN-NET on withdrawal and swap (T7); read-only reentrancy demonstrated, no view guard (T13); recipient checks on add, remove and swap (T14); `minNetAmountOut` and deadline on swap (T18); full rollback on failing/false-returning tokens, no-return tokens accepted (T20); ownerless ABI verified statically and at run time (T21); A8 on withdrawal, swap and skim (T23). M6: downward-only `sync()` (T3), deficit entry check on add, remove and swap (T9), per-token `skim()` to the immutable recipient with A8 (T12, T15, T16 Pool side), terminal-pool rules after a zero reserve (T25), `nonReentrant` on `sync` / `skim` with the bubbling / caught suite (T1). M7: Factory registry — sorting, zero / identical / duplicate rejection in both orders, code-existence check in the Factory only (T17); shared immutable recipient (T11); Factory ownerless, no payable entry point, no token-withdrawal function (T21); terminal pairs blocked (T25). Still open: Tier 1 taxed tokens (M8). M8 (design approved 2026-11-21, **not implemented**): the token-behaviour and exit-safety policy in §7 and threats T27–T29; the in-call balance invariant is still `PENDING` (DECISIONS M8-11). **All other mitigations below are unimplemented and untested.** A mitigation reduces risk; it does not mean the attack is eliminated. Passing tests is not a proof of security.
 
 Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [ARCHITECTURE.md](ARCHITECTURE.md). Test IDs: [TEST_MATRIX.md](TEST_MATRIX.md).
 
@@ -40,9 +40,19 @@ Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [
 | T1 | Reentrancy via token or recipient code | add, remove, swap, sync, skim | `nonReentrant` on every state-changing function; outbound transfers after effects; attacker mocks for cross-function reentry (bubbling, caught + correct transfer, caught + faulty transfer; DECISIONS M5-6, M6-5) | W07, S08, X01 (incl. M6 extension), L24 | Inbound `safeTransferFrom` precedes reserve update by necessity (ARCHITECTURE §7); view functions unguarded (T13) |
 | T2 | Earlier surplus counted as the current caller's input | add, swap | In-call balance snapshots (§5.2), each taken immediately before its own transfer (DECISIONS M6-8); BI-2 | R07, S07, B01, B03, B08, L13 | Relies on truthful `balanceOf` |
 | T3 | Price manipulation or share-value inflation via direct transfer + `sync()` | sync | Gate R=(b): `sync()` never absorbs surplus (BI-4) | R05, R10, B05 | In a deficit, `sync()` still changes reserves (T9) |
-| T4 | First-depositor inflation (tiny first position plus large direct transfer to dilute later LPs) | first/later mint | 1,000 LP locked; direct transfers never enter reserves (T3); `shares > 0` and `minShares` | L01, L02, L13 | Layered mitigations, not a formal proof; very small deposits are rejected |
-| T5 | Inbound tax over-credited | add, swap | Account only measured net | S05, L05 | Only the U8 model |
-| T6 | Adaptive deposit over-debits or mints unfair shares | add (Tier 1) | L-α seven conditions; `[T, T+1]` check; wrong hint reverts | L05, L09–L12, Z05 | Rounding dust, not zero; Pool cannot observe the sender's debit directly (relies on U8 inclusive condition) |
+| T4 | First-depositor inflation (tiny first position plus large direct transfer to dilute later LPs) | first/later mint | 1,000 LP locked; direct transfers never enter reserves (T3); `shares > 0` and `minShares` | L01, L02, L13 | Layered mitigations, not a formal proof; very small deposits are rejected. **M8 (DECISIONS M8-2, X1):** unmatched deposit contributions, bounded by the depositor's own `maxExcess`, enter the reserves. This reopens a bounded way to donate into reserves through `addLiquidity`. Analysis (not a proof): to raise the value of one share by Δ, an attacker loses at least about 1000·Δ, because the locked 1,000 LP keep their pro-rata part of the donation; a victim's extra floor-rounding loss is at most about Δ, and `minShares` / `shares > 0` still bound it. This is Uniswap-V2-level protection, weaker than before M8. **Profitability (analysis, not a formal proof):**
+- An attacker's own `maxExcess` bounds only its own donation.
+- If the attacker owns the fraction `f` of shares after donating, at least the lock's `1000/S'` of the donation is lost to it. So raising token i's per-share value by `Δ_i` costs at least `1000·Δ_i`.
+- The only gain inflation can create is part of later depositors' floor-rounding loss. That loss is below one share's worth in each token plus one smallest unit of the floored token ([proven] `u_i < r_i/S + r_i/r_j` for exact-delivery tokens; the victim's own `maxExcess` bounds it otherwise). The donation raises it by at most `Δ_i`.
+- So the marginal profit of donating is at most `f·Δ_i − 1000·Δ_i < 0`: **donating never increases profit**. The attacker earns at most the ordinary LP share of rounding dust that exists without any attack.
+- Donating token i does not change token j's per-share value, so it cannot inflate the rounding loss in token j.
+- Griefing (making deposits of value `V` revert with `σ = 0`) costs at least about `1000·V`.
+- Assumptions: donated tokens have real cost to the attacker (an attacker who can mint a pool token freely breaks any pool containing it anyway), and balances are truthful.
+- Separate MEV risks, not inflation: JIT capture of a victim's excess (T29), and sandwiching a deposit around a price move. The latter is bounded by the victim's own request caps, `maxDebit` and `minShares`, and is the same class as a Uniswap V2 `addLiquidity` sandwich (T18).
+
+To be tested by an L13 extension [needs tests] |
+| T5 | Inbound tax over-credited | add, swap | Account only measured net | S05, L05 | Only the U8 model. M8: measured net regardless of rate (§7.2) |
+| T6 | Adaptive deposit over-debits or mints unfair shares | add (Tier 1) | L-α seven conditions; `[T, T+1]` check; wrong hint reverts. **M8: L-α retired** (DECISIONS M8-1); replaced by the measured-net bounded deposit: no tax hint on-chain; shares from measured net; payer debit bounded over the whole call (`maxDebit`, M8-3); unmatched contribution bounded (`maxExcess`, M8-2) | L05, L09–L12, Z05 (to be rewritten in M8) | Rounding dust, not zero. Before M8 the Pool could not observe the sender's debit; M8 measures it (T28) |
 | T7 | Outbound tax leaves the recipient short | swap, remove | MIN-NET: compare the recipient's actual increase with the user minimum (BI-6) | S04, S06, W04, W05, B07 | Recipient balance measurements are unreliable for special recipients (e.g. the token's own tax collector); unsupported |
 | T8 | Fee missing or miscomputed | swap | Exact formula (§6.4); fee-adjusted inequality with proof (§6.5); five reference cases incl. tightness (`out + 1` fails); exact-formula fuzz at Pool level | S02, S10, S11, S14, S15, Z01 | Tests sample behaviour; no on-chain assertion (A9 = tests only, DECISIONS M5-9): without A9 the swap lacks one additional on-chain invariant check, so certain implementation errors that no other check detects might not be stopped at run time by this invariant |
 | T9 | Deficit (`balance < reserve`) | add, remove, swap | Entry check `ReserveDeficit()` reverts those three before any effect or transfer (DECISIONS M6-2); `sync()` lowers reserves and emits `ReserveSynced` (U4) | R08, R17, B05 | Should not occur with supported tokens; if it does, LPs bear the loss once `sync()` is called. Tested: deficits present at entry, in either or both tokens, for every operation. Not covered by the entry check: a deficit created during the call by an unsupported token (e.g. a hook that reduces the Pool's balance of the other token); A8, `[T, T+1]` and MIN-NET check only the transfer they surround, so such a deficit is not proven to be detected in that call and is first rejected by the next call's entry check (until `sync()`). `getAmountOut` has no deficit check and may quote from stale reserves while swaps revert (`test_R08_quoteDoesNotCheckDeficit`) |
@@ -63,6 +73,10 @@ Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [
 | T24 | User sends LP tokens to the Pool address by mistake | LP ERC-20 | LP-SELF (ii): LP transfers to the Pool revert, including zero-value transfers | P06, P09 | LP sent to other wrong addresses is still unrecoverable (standard ERC-20 behaviour) |
 | T25 | Zero-reserve state: after `sync()` lowers a reserve to 0 while `totalSupply > 0`, later deposits could hit division by zero and proportional withdrawals could revert (`amount_i == 0`), trapping the LPs' remaining other-token assets | add, remove, sync | Terminal-pool rule (DECISIONS M6-1, M4-3r, ADR-023): deposits and swaps revert `InsufficientLiquidity`; withdrawal pays the remaining non-zero reserve proportionally, with MIN-NET on both sides. Implemented and tested in M6 (zero reserve in either token, both zero, with surplus, last LP exit) | R14–R22 | Arises only with tokens outside the supported model. A terminal pool cannot trade again through the current interface; the reserves backing the 1,000 locked LP can never be redeemed (recovery = extension candidate, DECISIONS §8). Because each pair is unique in the Factory, a terminal Pool also blocks its pair in that Factory permanently: `createPair` reverts `PairExists()` (DECISIONS M7-5, F04b) |
 | T26 | Price manipulation and oracle misuse: the Pool's spot price (`getReserves`, `getAmountOut`) can be moved arbitrarily within one transaction by a large (e.g. flash-loan-funded) swap and moved back afterwards; a protocol that reads it as a price feed or collateral oracle can be exploited | swap, views | Within the Pool: swaps are priced only from recorded reserves, so direct transfers never move the price (Gate R=(b), R01, Q03, S07); `sync()` can only lower a reserve when the balance has really fallen (BI-4, unsupported tokens only); `minNetAmountOut` and deadline bound a user's own loss (T18); every swap keeps the fee-adjusted invariant (BI-9). No oracle: no TWAP, no cumulative price, no manipulation-resistant view (ARCHITECTURE §10, `OUT-OF-SCOPE`) | R01, Q03, S07, S04, S11 | The spot price is manipulable by anyone with enough capital for the duration of a transaction; sandwiching and MEV remain (T18); views are unguarded mid-call (T13); during a deficit `getAmountOut` can quote from stale reserves (DECISIONS M6-9). Integrators must not use any view of this Pool as an oracle; an oracle would be a new extension needing a separate decision (D14) |
+| T27 | Liquidity trapped after deposit: a token later refuses Pool outbound transfers (pause, blacklisting the Pool, a fee that over-debits the Pool) or its `balanceOf` reverts | remove, swap, skim, sync | None that can guarantee exit: A8 is kept unchanged (DECISIONS M8-7). No inbound check can establish future outbound behaviour of a mutable or upgradeable token (§7.4) | Limitation tests (M8): deposit succeeds → outbound fee enabled → `removeLiquidity` reverts `OutboundTransferMismatch` with state unchanged; `balanceOf` revert blocks every function | High. The healthy token's assets can become unredeemable too, and the Pool can keep buying the broken token through swaps (§7.6). No approved recovery path (§7.5) |
+| T28 | Payer-debit bound evaded or mismeasured | add | `msg.sender`'s balance of each token snapshotted after all checks and before the first transfer, and again after the last external call; net decrease `≤ maxDebit_i` (DECISIONS M8-3). [proven] This captures every in-call change, including cross-token callbacks, because all state-changing external calls lie between the snapshots and `balanceOf` is called with STATICCALL | M8 tests: cross-token callback debiting the payer; exclusive inbound fee; boundary `maxDebit` / `+1` | [assumption] truthful `balanceOf`. The bound is the payer's **net** in-call change (in-call credits offset debits). Debits the token applies after the call are not covered. With a router, the bound protects the router (the payer), not the end user (REPORT_NOTES §1.4) |
+| T29 | Unmatched deposit contribution captured by others | add | Bounded by the depositor's `maxExcess_i` (absolute, Pool-received units; DECISIONS M8-2); `minShares` | M8 tests: `u == maxExcess` succeeds, `maxExcess − 1` reverts; JIT scenario | Under X1 the excess belongs to everyone who is an LP at execution time, including a just-in-time LP who adds before and removes after the deposit. The depositor recovers only its own pro-rata part; price-restoring arbitrage takes a small part from all LPs. For a taxed token the depositor's gross cost of `u` is higher than `u`. The unmatched amount also moves the spot price (T26) |
+| T30 | Foreign balance change during `swapExactInput` / `removeLiquidity` (a callback of one token moves the Pool's balance of either token outside the transfer being measured) | swap, remove | Guarantees from M5/M6, unchanged by M8: the entry deficit check (M6-2); each own transfer measured from a fresh snapshot (M6-8); A8 on every outbound transfer; MIN-NET on the recipient; `nonReentrant`. M8's in-call balance check (BI-2′, `InCallBalanceLoss`) applies to **`addLiquidity` only** (DECISIONS M8-11, R2 = (a)) | B08 (donation stays surplus), X01 | Not detected within the call: a foreign **decrease of surplus** (for example unskimmed surplus taken by a cross-token callback) is never detected; a foreign change that creates a **deficit** is first rejected by the next call's entry check (until `sync()`). Arises only with tokens outside the supported model. Extending the check to swap / remove is a separate, later decision (with the optimisation items) |
 
 ## 5. Excluded from the current attack surface
 
@@ -93,3 +107,88 @@ No owner exists. This does not remove risk around the economically privileged `s
 15. Factory token check (T17, DECISIONS M7-2): the code-existence check runs only in the Factory, does not prove ERC-20 compliance, and prevents creating a pair in advance for a token that is not deployed yet.
 16. Terminal pairs (T25, DECISIONS M7-5): a pair whose Pool has become terminal can never be re-created in the same Factory.
 17. Deficit recovery needs an external `sync()` call (T9): until someone pays gas to call it, add / remove / swap revert `ReserveDeficit`. Whether a better mechanism exists is an open question for the optimisation stage (DECISIONS §8).
+18. Exit is not guaranteed for every token (T27, §7.4): a successful deposit is not evidence that withdrawal will succeed. `min_iNet = 0` only guarantees that MIN-NET is never the reason a withdrawal fails.
+19. One failing token can make the other, healthy token's assets unredeemable, because withdrawal transfers both tokens atomically and the deficit check reads both balances (§7.6).
+20. No approved recovery path exists for a token that stops paying out or whose `balanceOf` reverts; the Pool is ownerless, and the Factory cannot re-create the pair (§7.5, DECISIONS M7-5).
+21. Unmatched deposit contributions enter the reserves (X1): they are shared by all LPs at execution time, including just-in-time LPs, and weaken one layer of the first-depositor defence (T4, T29).
+
+## 7. M8 token-behaviour and exit-safety policy
+
+**Status:** design approved 2026-11-21 (DECISIONS §15); **not implemented or tested**. The in-call balance invariant (DECISIONS M8-11) is still `PENDING`. Tags: [proven] mathematical argument; [assumption] about token behaviour; [needs tests] not yet shown by executed tests.
+
+### 7.1 Risk levels (student classification, 2026-11-21)
+
+| Level | Behaviour | Handling |
+|---|---|---|
+| Low | Fixed transfer tax; the Pool can measure every transfer, and the Pool is debited exactly what it sends | Supported: deposits and swaps account only measured net; outputs are judged by MIN-NET |
+| Medium | Tax changes dynamically or randomly | Explicit revert and disclosed exit risk. Precision: an **inclusive** tax of any rate does **not** trigger A8, because A8 compares the Pool's own debit, not the recipient's credit. It can make MIN-NET revert, or take value through the tax. A change becomes **high** risk as soon as it alters the Pool-side debit (an extra sender-side charge, or a debit below the amount): then A8 rejects every outbound transfer of that token |
+| High | The token refuses outbound transfers (pause, blacklisting the Pool, outbound over-debit) or `balanceOf()` reverts | Treated as able to make the Pool unusable for a long time or permanently (T27); no approved recovery (§7.5) |
+
+### 7.2 Support scope (A8 unchanged)
+
+Categories: **1** supported; **2** conditionally supported, may revert; **3** unsupported; **4** may trap liquidity.
+
+| Token behaviour | Inbound (deposit, swap in) | Outbound (withdraw, swap out, skim) | Category |
+|---|---|---|---|
+| Standard ERC-20 | ✓ | ✓ | 1 |
+| Inclusive FOT, fixed rate (known or unknown to the Pool) | ✓ measured net; the unmatched part is bounded by `maxExcess` | ✓ A8 passes; the recipient receives less, judged by MIN-NET | 1 |
+| Inclusive FOT, random or dynamic rate | ✓, may revert on the user's bounds | A8 passes; MIN-NET may revert; value can be taken by the tax (up to 100%) | 2 |
+| Extra sender-side charge on inbound only (Pool-outbound exact) | conditional: payer's net debit `≤ maxDebit` | ✓ | 2 |
+| Extra charge on Pool-outbound (exclusive FOT) | ✓ — **deposits succeed** | every outbound transfer reverts (A8) | 3 + 4 |
+| Direction- or address-dependent, owner-settable, upgradeable, pausable or blacklisting tokens | measured | may switch to the row above at any time | 4 |
+| Rebasing or reflection | rebase down → deficit (T9); rebase up or reflection → surplus, which goes to `skim()` | as inbound | 3 |
+| Untruthful `balanceOf`, or `balanceOf` reverting | measurements meaningless | every function can revert | 3 + 4 |
+
+### 7.3 What triggers A8
+
+A8 reverts a Pool outbound transfer of `x` (in `removeLiquidity`, swap output, `skim`) when the Pool's own balance does not fall by exactly `x`:
+- (a) the token charges the Pool extra (exclusive FOT);
+- (b) the Pool is debited less than `x` while the call reports success;
+- (c) the Pool's balance of that token changes for another reason during the transfer (a rebase, reflection, or a callback moving the Pool's balance).
+
+A8 is **not** triggered by an inclusive tax (the recipient side is MIN-NET's job), or by a token transfer that reverts (that revert simply propagates). Deposits contain no outbound transfer in the M8 design, so they never trigger A8.
+
+### 7.4 Can a depositor know that exit may fail later?
+
+**[proven by counterexample] No inbound-only check can guarantee future outbound compatibility.**
+- A token can debit the payer exactly 100 and credit the Pool exactly 100 on deposit, then enable an outbound over-debit later.
+- Every withdrawal then fails A8, although every check at deposit time passed.
+- The payer-debit bound (T28) protects what the user pays. It is not an exit guarantee.
+
+Policy:
+- Exit is guaranteed only if, **at exit time**, all of the following hold:
+  - both tokens' `balanceOf` returns truthfully and does not revert;
+  - a Pool `transfer` succeeds and debits the Pool exactly the amount sent;
+  - the Pool is not paused or blacklisted;
+  - there is no deficit, or `sync()` has been called;
+  - the position is large enough that no withdrawn amount rounds to 0 (`InsufficientLiquidityBurned`);
+  - the 1,000 locked LP is never redeemable.
+- Depositors (and any UI) must treat tokens whose transfer logic can change as carrying exit risk: upgradeable proxies, owner-settable fees, pause, blacklist. The Pool gives no on-chain warning.
+
+### 7.5 Approved recovery paths if a token's behaviour changes
+
+| Situation | Recovery |
+|---|---|
+| Deficit (balance below reserve) | `sync()` (anyone; LPs bear the loss), then the terminal-pool rules if a reserve reaches 0 (M6-1, M4-3r) |
+| Token stops paying out, over-debits the Pool, or `balanceOf` reverts | **None approved.** The Pool is ownerless (D10) and has no sweep; the Factory cannot re-create the pair (M7-5). Recovery depends entirely on the token reverting its behaviour |
+| Extension candidate E1, "forfeit one side on exit" (burn shares, receive only the healthy token, leave the other side to the remaining LPs) | Not approved; would change D7 and the ABI. It would not help when `balanceOf` reverts, because the entry checks read both balances |
+
+### 7.6 Can a failing token make the healthy token unredeemable?
+
+**Yes.**
+- `removeLiquidity` transfers both tokens in one atomic call, and the deficit entry check reads both balances. So one token whose outbound transfer fails (A8 or revert) blocks the withdrawal of the healthy token as well.
+- If the broken token X fails only outbound, swaps X → Y still work: inbound X is accepted, outbound Y is healthy. Traders can then sell X into the Pool for Y while LPs cannot withdraw. The LPs' Y reserve is progressively converted into X that nobody can withdraw.
+- If `balanceOf(X)` reverts, add, remove, swap, `sync` and `skim` all revert.
+- **New deposits are still accepted while exit is impossible.** In the mode "X can still be transferred in, but the Pool cannot transfer it out", `addLiquidity` pulls X with `transferFrom` and succeeds. New LPs therefore deposit into a Pool they cannot leave. The inbound-only policy of DECISIONS M8-12 cannot detect this.
+- Model illustration (Python model, not the Solidity code): Pool (1,000,000 X, 1,000,000 Y), ten swaps of 100,000 X → Y at 30 bps. The Y reserve falls to 501,008: 498,992 Y are paid out, and the LPs hold 2,000,000 X that nobody can withdraw.
+
+**Limitation test required (M8, TEST_MATRIX X06; not only documentation):**
+1. Build a normal Pool.
+2. Switch X to one of three modes:
+   - (A) the Pool's outbound `transfer` reverts, inbound `transferFrom` still works;
+   - (B) every transfer reverts;
+   - (C) `balanceOf` reverts.
+3. Show that `removeLiquidity` fails with the exact error and full state rollback.
+4. In mode (A): X → Y swaps succeed, Y → X swaps fail, and new deposits succeed. In mode (B): swaps in both directions and deposits fail. In mode (C): every function fails.
+5. Repeat X → Y swaps and record the Y reserve and the LPs' redeemable value per share. This shows the economic risk to LPs.
+6. Switch X back to normal and show that exit works again. Recovery depends only on the token.

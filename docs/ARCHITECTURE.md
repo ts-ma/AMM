@@ -1,6 +1,6 @@
 # ARCHITECTURE — AMM Specification (Pre-Implementation)
 
-**Last updated:** 2026-11-20
+**Last updated:** 2026-11-21
 
 **Status:** Target architecture, partly implemented (M2–M7 accepted). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
@@ -110,7 +110,8 @@ Uniswap V2's unconditional `reserve := balance` is not used: it would silently a
 | ID | Invariant | Enforced by | Tests |
 |---|---|---|---|
 | BI-1 | After every successful call, `balance_i ≥ reserve_i` for both tokens (supported tokens). | Construction of §5.2 + BI-2/BI-5 | I2 |
-| BI-2 | `addLiquidity`, `removeLiquidity` and `swapExactInput` leave `surplus_i` unchanged for both tokens. | Reserve changes equal measured Pool balance changes | B01–B03 |
+| BI-2 | (Restated 2026-11-21; original wording and reason in DECISIONS ADR-025.) `addLiquidity`, `removeLiquidity` and `swapExactInput` change each reserve only by the measured Pool-side change of their **own** transfers, each measured from a fresh snapshot (M6-8); surplus present before the call is never credited to the caller, and a transfer made by someone else during the call stays surplus (B08). **Not claimed:** that surplus is unchanged by foreign in-call transfers. | Construction of §5.2 (M5/M6) | B01–B03, B08 |
+| BI-2′ | **`addLiquidity` only (M8, design approved, not implemented):** under truthful asset measurement, a successful deposit credits to reserves only its own measured arrival `n_i`; `surplus_end ≥ surplus_start` for both tokens; any other arrival stays surplus. Option X1 only (`reserve_i += n_i`). Not a property of `swapExactInput` / `removeLiquidity` (THREAT_MODEL T30) and not a guarantee about ERC-20 tokens in general. | On-chain: `B^end − B^start ≥ n_i`, else `InCallBalanceLoss()` (DECISIONS M8-11) | M8 tests (TEST_MATRIX §3.2) |
 | BI-3 | `skim()` leaves reserves unchanged and, for every token that had surplus, leaves `balance_i == reserve_i`. | §7.8 | B04, R03 |
 | BI-4 | `sync()` never increases a reserve; afterwards `reserve_i = min(old reserve_i, balance_i)`; balances unchanged. | §7.7 | B05, R05 |
 | BI-5 | Every Pool outbound transfer of `x` lowers the Pool's own balance by exactly `x`; otherwise the call reverts. | On-chain check (A8) | B06, X04 |
@@ -313,6 +314,11 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 - **M3:** only the initial (`S == 0`) branch; `S > 0` reverted `LaterDepositNotImplemented()` (DECISIONS M3-3). Exact checks, errors and event: DECISIONS M3-4. The deficit entry check is added in M6 (with reserves 0, no deficit can exist in M3).
 - **M4:** `S > 0` with both hints 0 follows §6.2 with `t = 0` (`g_i = T_i`); errors per DECISIONS M4-2. `S > 0` with any non-zero hint reverts `TaxedLaterDepositNotImplemented()` before any transfer until M8 (DECISIONS M4-1).
 - **M6:** in the `S > 0` branch only, in this order before any transfer: deficit → `ReserveDeficit()` (M6-2); either reserve 0 → `InsufficientLiquidity()` (terminal pool, M6-1); then the temporary hint check. With `S == 0` both reserves are 0, so no deficit can exist and the check is skipped.
+- **M8 (design approved in principle, ABI not yet approved; DECISIONS M8-1 to M8-13):** the signature becomes a single struct parameter; this section is rewritten in the M8 decisions commit. Rules already fixed for that rewrite:
+  - The per-token request field is a cap on what the Pool may request, **not a promise that this amount is transferred**. Step 2 and the re-plan may request less, and the payer's actual debit can differ from the request; the debit is bounded only by `maxDebit`.
+  - The payer is always `msg.sender`. With a router, the router is the payer and `maxDebit` protects the router, not the end user. The LP `recipient` may differ from the payer.
+  - On the initial deposit the excess fields have no effect (`u_i = 0` by definition).
+  - Postcondition: BI-2′ (§5.5).
 
 ### 7.3 `removeLiquidity(shares, min0Net, min1Net, recipient, deadline) → (net0, net1)`
 

@@ -1,6 +1,6 @@
 # TEST MATRIX — Foundry Test Plan
 
-**Last updated:** 2026-11-20
+**Last updated:** 2026-11-21
 
 **Status:** Rows marked `PASSED` (M1–M6) are implemented and were run. Everything else is a plan, not a record of passing tests. "Maths level" means the library function was tested; the Pool function that uses it does not exist yet. Record a result and the test function name only after the test has actually been run.
 
@@ -81,6 +81,34 @@ M3 results (2026-11-18): `test/AMMPoolLiquidity.t.sol` 37 tests passed (default 
 | L23 | Failing token1 (reverting `transferFrom`, `false` return, reverting `balanceOf`) rolls back the whole call, including token0's completed transfer | `PASSED` — `test_L23_*` (4 tests) |
 | L24 | Reentrancy smoke test: a token callback re-entering `addLiquidity` reverts `ReentrancyGuardReentrantCall` (full attacks in M5) | `PASSED` (smoke) — `test_L24_tokenCallbackCannotReenterAddLiquidity` |
 | L25 | `LiquidityAdded` and the two `Transfer` mint events carry the expected fields | `PASSED` — `test_L25_events` |
+
+### 3.2 M8 measured-net deposit — planned tests (DECISIONS M8-1 to M8-13; all `NOT IMPLEMENTED`)
+
+Plan only. IDs are final once the M8 decisions commit is made. Every revert asserts the exact error (M4-8) and full-state rollback: reserves, Pool / payer / recipient token balances, LP supply and balances, allowances. Every fuzz row states its success range, safe-revert inputs and uncovered boundaries (M5-7).
+
+| ID | Description | Status |
+|---|---|---|
+| L30 | Interface (M8-5): new `addLiquidity` selector equals the approved struct signature, old selector absent; `LiquidityAdded` topic unchanged; X03 still 22 entries with exactly one approved replacement; `TaxedLaterDepositNotImplemented` / `NetAmountOutOfRange` absent from `src/` and the compiled ABI; map of each removed L26/L27 test to its replacing functional test | `NOT IMPLEMENTED` |
+| L31 | First token delivers **less** than requested (taxed first token): the second request is re-planned from the measured net; the worked numbers of REPORT_NOTES §1.5 | `NOT IMPLEMENTED` |
+| L32 | First token delivers **more** than requested (bonus token): re-plan capped by the second token's request cap; this covers the `min(...)` branch, so a mutant removing it is a test gap, not an equivalent mutant | `NOT IMPLEMENTED` |
+| L33 | Both tokens taxed (fixed, unknown to the Pool), with each pull order | `NOT IMPLEMENTED` |
+| L34 | Token0-first vs. token1-first on the same state: different unmatched amounts as predicted by the model; shares from measured net in both | `NOT IMPLEMENTED` |
+| L35 | Second token delivers **zero** (100% tax mock): `σ == 0` → `InsufficientShares`, full rollback | `NOT IMPLEMENTED` |
+| L36 | `maxExcess` boundary per token: `u == maxExcess` succeeds; `maxExcess = u − 1` → `ExcessContributionTooHigh` | `NOT IMPLEMENTED` |
+| L37 | `maxDebit` boundary per token (inbound exclusive mock): debit `== maxDebit` succeeds, `maxDebit = debit − 1` → `PayerDebitTooHigh`; the success case does **not** assert future redeemability (M8-12 (4)) | `NOT IMPLEMENTED` |
+| L38 | Payer debited **extra during the whole call** by a cross-token callback (token0's hook slashes the payer's token1 outside token1's own window) → `PayerDebitTooHigh`; the same amount without the callback succeeds (shows that local windows would miss it) | `NOT IMPLEMENTED` |
+| L39 | Request cap is not a promise: the actual request is below the request cap after step 2 / re-plan; the payer's debit is measured, not assumed equal to the cap | `NOT IMPLEMENTED` |
+| L40 | Check order (M8-13 (d)) when several conditions fail at once: the first error in the approved order is reported | `NOT IMPLEMENTED` |
+| B09 | In-call balance rule (M8-11, X1, `addLiquidity` only): (a) pre-existing surplus in both tokens, no foreign change → succeeds, surplus unchanged; (b) cross-token debit of the Pool **masked by surplus** (r1 = 1000, B1 = 1300, 200 removed during token0's pull, n1 = 500) → `InCallBalanceLoss`, full rollback; (c) extra GIFT during the first pull (B08 case) → succeeds, surplus increases by GIFT; (d) zero surplus with a cross-token debit → `InCallBalanceLoss`; (e) the comparison is written in subtraction form, and a fuzzed balance near `type(uint256).max` neither overflows nor passes wrongly | `NOT IMPLEMENTED` |
+| B10 | BI-2′ is **not** extended: swap / remove with a masked foreign surplus decrease still succeed — a documented limitation test (THREAT_MODEL T30) | `NOT IMPLEMENTED` |
+| L13b | Inflation via a self-chosen large `maxExcess` (THREAT_MODEL T4): attacker's loss ≥ about 1000 × per-share increase; victim's extra floor loss ≤ the per-share increase; victim protected by `minShares` / `σ > 0`; the attacker's net result is not better than without donating | `NOT IMPLEMENTED` |
+| L41 | JIT capture of a victim's excess (T29): add before, remove after; the capture is bounded by the victim's `maxExcess` | `NOT IMPLEMENTED` |
+| Z08 | Saturating arithmetic (M8-4): (i) one side's `n·S/r` ≥ 2^256, the other side fits → `σ` = the smaller side, proceeds; (ii) both sides saturate → checked `supply + σ` reverts Panic `0x11` before any other post-transfer check; (iii) one side saturates, the other is exactly `2^256 − 1` → Panic `0x11`; (iv) re-plan saturates → request equals the request cap; 512-bit differential oracle over `[1, 2^256 − 1]` | `NOT IMPLEMENTED` |
+| Z09 | Fuzz: per-share reserves never decrease; BI-2′; debit `≤ maxDebit`; `u ≤ maxExcess`; random tax per transfer in `[0, 9999]`, reserves `[10^3, 2^112]`, requests `[1, 2^112]`, mixed 6/18 decimals | `NOT IMPLEMENTED` |
+| X06 | Trapped-liquidity limitation (THREAT_MODEL §7.6), modes (A) outbound-only refusal, (B) all transfers revert, (C) `balanceOf` reverts: remove fails; in (A) X → Y swaps and new deposits still succeed, Y → X fails; repeated X → Y swaps drain Y and the LPs' redeemable value is recorded; restoring X makes exit work again | `NOT IMPLEMENTED` |
+| X07 | Tax changes between deposit and withdrawal: an inclusive increase never triggers A8, MIN-NET decides; an outbound over-debit enabled after deposit → `OutboundTransferMismatch` (A8) | `NOT IMPLEMENTED` |
+
+Mocks: variable / random tax with separate inbound and outbound settings, including 100%; exclusive extra charge (inbound and outbound separately, switchable after deposit); bonus (credits more than sent); cross-token hook (`ReentrantERC20` + `MockDeficitERC20.slash` on the Pool or on the payer); `MockFailingERC20` gains an additive "all transfers revert" mode for X06 (B), while the existing `RevertTransfer` and `RevertBalanceOf` modes cover (A) and (C).
 
 ## 4. Withdrawal (M4, M5, M8)
 
