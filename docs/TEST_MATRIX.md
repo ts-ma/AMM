@@ -95,10 +95,10 @@ Plan only. IDs are final once the M8 decisions commit is made. Every revert asse
 | L34 | Token0-first vs. token1-first on the same state: different unmatched amounts as predicted by the model; shares from measured net in both | `NOT IMPLEMENTED` |
 | L35 | Second token delivers **zero** (100% tax mock): `σ == 0` → `InsufficientShares`, full rollback | `NOT IMPLEMENTED` |
 | L36 | `maxExcess` boundary per token: `u == maxExcess` succeeds; `maxExcess = u − 1` → `ExcessContributionTooHigh` | `NOT IMPLEMENTED` |
-| L37 | `maxDebit` boundary per token (inbound exclusive mock): debit `== maxDebit` succeeds, `maxDebit = debit − 1` → `PayerDebitTooHigh`; the success case does **not** assert future redeemability (M8-12 (4)) | `NOT IMPLEMENTED` |
-| L38 | Payer debited **extra during the whole call** by a cross-token callback (token0's hook slashes the payer's token1 outside token1's own window) → `PayerDebitTooHigh`; the same amount without the callback succeeds (shows that local windows would miss it) | `NOT IMPLEMENTED` |
+| L37 | `maxDebit` boundary per token (inbound exclusive mock): debit `== maxDebit` succeeds, `maxDebit = debit − 1` → `PayerDebitTooHigh`; the success case does **not** assert future redeemability (M8-12 (4)) | `PASSED` (M8 commit 3) — `test/AMMPoolPayerDebit.t.sol`: `test_L37_plainTokens_bothPullOrders`, `test_L37_inclusiveFee_bothPositions_bothPullOrders`, `test_L37_exclusiveFee_bothPositions_bothPullOrders`, `test_L37_initialDeposit_exclusiveFee_bothPullOrders`, `test_L37_payerBalanceRises_countsAsZero_bothPositions_bothPullOrders`, `test_L37_randomTaxBothTokens_seeded_bothPullOrders` (seeds 1–8, fresh fixture per seed). Shared driver per case: limit above, equal (succeed, identical result), one unit over on token0, on token1, on both (`PayerDebitTooHigh`, full-state rollback) |
+| L38 | Payer debited **extra during the whole call** by a cross-token callback (token0's hook slashes the payer's token1 outside token1's own window) → `PayerDebitTooHigh`; the same amount without the callback succeeds (shows that local windows would miss it) | `PASSED` (M8 commit 3) — `test_L38_crossTokenHook_bothDirections_bothPullOrders`: hook token as token0 and as token1 (both directions), each pull order; the limit covering only the deposit reverts, the limit including the slash succeeds with the clean-run result |
 | L39 | Request cap is not a promise: the actual request is below the request cap after step 2 / re-plan; the payer's debit is measured, not assumed equal to the cap | `NOT IMPLEMENTED` |
-| L40 | Check order (M8-13 (d)) when several conditions fail at once: the first error in the approved order is reported | `NOT IMPLEMENTED` |
+| L40 | Check order (M8-13 (d)) when several conditions fail at once: the first error in the approved order is reported | `PayerDebitTooHigh` part `PASSED` (M8 commit 3) — before `InsufficientShares`, `ExcessContributionTooHigh` and the checked-supply Panic (each with a control run showing the later error alone); initial path: before `InsufficientInitialLiquidity`. `InCallBalanceLoss` part follows in commit 4 |
 | B09 | In-call balance rule (M8-11, X1, `addLiquidity` only): (a) pre-existing surplus in both tokens, no foreign change → succeeds, surplus unchanged; (b) cross-token debit of the Pool **masked by surplus** (r1 = 1000, B1 = 1300, 200 removed during token0's pull, n1 = 500) → `InCallBalanceLoss`, full rollback; (c) extra GIFT during the first pull (B08 case) → succeeds, surplus increases by GIFT; (d) zero surplus with a cross-token debit → `InCallBalanceLoss`; (e) the comparison is written in subtraction form, and a fuzzed balance near `type(uint256).max` neither overflows nor passes wrongly | `NOT IMPLEMENTED` |
 | B10 | BI-2′ is **not** extended: swap / remove with a masked foreign surplus decrease still succeed — a documented limitation test (THREAT_MODEL T30) | `NOT IMPLEMENTED` |
 | L13b | Inflation via a self-chosen large `maxExcess` (THREAT_MODEL T4): attacker's loss ≥ about 1000 × per-share increase; victim's extra floor loss ≤ the per-share increase; victim protected by `minShares` / `σ > 0`; the attacker's net result is not better than without donating | `NOT IMPLEMENTED` |
@@ -155,6 +155,22 @@ Behaviour changes compared with M1–M7 (all approved in M8 unless noted):
 5. Unmatched contributions enter the reserves, bounded by `maxExcess` (M8-2). For Tier 0 tokens this is only the rounding dust that pre-M8 deposits already left in the reserves.
 6. The initial deposit honours `token1First` (only the transfer order changes).
 7. **Not yet enforced (WIP):** `maxDebit0/1` (commit 3) and BI-2′ / `InCallBalanceLoss` (commit 4). Gas is not measured yet (G05).
+
+M8 commit 3 (WORK IN PROGRESS: BI-2′ follows in commit 4): `maxDebit` enforced by a whole-call snapshot of `msg.sender`'s two balances, taken after every pre-transfer check and before the first transfer. The end reading comes after the second pull. `addLiquidity` is split into the pull part (`_pullLater`) and the accounting part (`_mintLater`) so that the payer check sits between them. No migration was needed: the existing tests use unbounded `maxDebit` (row 1). New tests: 11 in `test/AMMPoolPayerDebit.t.sol` (L37 ×6, L38 ×1, L40 ×4). Suite 351 → 362, all `PASSED` with default fuzz runs and with `FOUNDRY_FUZZ_RUNS=10000`.
+
+Mutation (commit 3; per-file backup and restore, hash identical afterwards; run against `test/AMMPoolPayerDebit.t.sol`):
+
+| Mutant | Result |
+|---|---|
+| M1 token0 check removed | killed (8 tests) |
+| M2 token1 check removed | killed (8 tests) |
+| M3a token0 `start − end` without the "rose = 0" guard | killed (`test_L37_payerBalanceRises_*`, underflow) |
+| M3b same for token1 | killed (same test) |
+| M4 start snapshot taken after the transfers | killed (10 tests) |
+| M5a token0 `>=` instead of `>` | killed (7 tests) |
+| M5b token1 `>=` instead of `>` | killed (7 tests) |
+
+Gas: **not measured** (G05 pending). A test-level gas figure is not used as evidence because it is dominated by Pool deployment cost. `forge build --sizes`: AMMPool runtime 9,881 B (margin 14,695 B), initcode 11,009 B (margin 38,143 B).
 
 ## 4. Withdrawal (M4, M5, M8)
 

@@ -15,8 +15,8 @@ import {IAMMPool} from "./interfaces/IAMMPool.sol";
 ///      controls and the initial deposit with the permanent 1,000-unit lock (M3), Tier 0 later
 ///      deposits and proportional withdrawal (M4), exact-input swap (M5), downward-only sync,
 ///      per-token skim, deficit entry checks and terminal-pool rules (M6), measured-net
-///      deposit with a struct ABI (M8, WORK IN PROGRESS: DECISIONS M8-3 `maxDebit` and M8-11
-///      BI-2′ are not implemented yet; not for deployment).
+///      deposit with a struct ABI and payer-debit bound (M8, WORK IN PROGRESS: DECISIONS M8-11
+///      BI-2′ is not implemented yet; not for deployment).
 ///      add, remove and swap revert on a deficit (balance < reserve; U4, DECISIONS M6-2).
 ///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.4, §7.1–§7.9.
 contract AMMPool is ERC20, ReentrancyGuardTransient {
@@ -119,6 +119,9 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @notice A later deposit's unmatched contribution of one token exceeds the caller's
     ///         `maxExcess` for that token (DECISIONS M8-2).
     error ExcessContributionTooHigh();
+    /// @notice The payer's (`msg.sender`'s) net balance decrease of one token over the whole
+    ///         `addLiquidity` call exceeds the caller's `maxDebit` for that token (DECISIONS M8-3).
+    error PayerDebitTooHigh();
     /// @notice A withdrawal's proportional amount of one token rounds down to 0 (ARCHITECTURE §6.3).
     error InsufficientLiquidityBurned();
     /// @notice The Pool's balance did not fall by exactly the amount sent (A8, BI-5).
@@ -167,15 +170,18 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @notice Deposit both tokens and receive LP shares (ARCHITECTURE §7.2; DECISIONS M8-1, M8-8).
     /// @dev Initial deposit (`totalSupply() == 0`, ARCHITECTURE §6.1): both request caps are pulled
     ///      in full and only what arrived is accounted. Later deposit: the measured-net deposit
-    ///      P1+ (`_addLater`). No tax hint exists; every amount is measured.
+    ///      P1+ (`_pullLater`, `_mintLater`). No tax hint exists; every amount is measured.
     ///      Checks before any transfer (M3-4, M6-2, M6-1): deadline → recipient → zero request →
-    ///      (later only) deficit → terminal pool. Post-transfer order (M8-13 (d)):
-    ///      `InsufficientShares` → checked `supply + shares` → `ExcessContributionTooHigh`.
+    ///      (later only) deficit → terminal pool. Then the payer snapshot (M8-3), the transfers,
+    ///      and the post-transfer checks in the order of M8-13 (d):
+    ///      [`InCallBalanceLoss`, commit 4] → `PayerDebitTooHigh` → later: `InsufficientShares` →
+    ///      checked `supply + shares` → `ExcessContributionTooHigh`; initial:
+    ///      `InsufficientInitialLiquidity` → `InsufficientShares`.
     ///      Call order: the inbound transfers necessarily happen before the reserves are written,
     ///      because the Pool must measure what it actually received; `nonReentrant` blocks any
     ///      token callback from re-entering a state-changing function (ARCHITECTURE §7).
-    ///      WORK IN PROGRESS (M8 commits 2–4): `maxDebit0/1` are accepted but not yet enforced
-    ///      (M8-3), and the in-call balance rule BI-2′ (M8-11) is not yet checked.
+    ///      WORK IN PROGRESS (M8 commits 2–4): the in-call balance rule BI-2′ (M8-11) is not yet
+    ///      checked.
     /// @param p See `IAMMPool.AddLiquidityParams`.
     /// @return net0 Measured token0 received by the Pool (token0, whatever the pull order).
     /// @return net1 Measured token1 received by the Pool.
@@ -189,6 +195,20 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         if (p.recipient == address(0) || p.recipient == address(this)) revert InvalidRecipient();
         if (p.amount0RequestMax == 0 || p.amount1RequestMax == 0) revert ZeroAmount();
         uint256 supply = totalSupply();
+        if (supply != 0) {
+            // Deficit entry check (M6-2) only on the later path: with supply == 0 both reserves
+            // are 0, so a deficit cannot exist on the initial path.
+            _checkNoDeficit();
+            // Terminal pool (DECISIONS M6-1): a zero reserve can only come from sync(); refuse
+            // before any transfer instead of dividing by zero in the later-deposit arithmetic.
+            if (reserve0 == 0 || reserve1 == 0) revert AMMMath.InsufficientLiquidity();
+        }
+
+        // M8-3: whole-call snapshot of the payer (always msg.sender) — after every check and
+        // before the first transfer. View calls only (STATICCALL), so no callback point here.
+        uint256 payerStart0 = IERC20(token0).balanceOf(msg.sender);
+        uint256 payerStart1 = IERC20(token1).balanceOf(msg.sender);
+
         if (supply == 0) {
             // Initial deposit (ARCHITECTURE §6.1): no ratio exists yet, so pull both caps in the
             // caller's order and account only what actually arrived. Earlier surplus is excluded
@@ -200,7 +220,14 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
                 net0 = _pullMeasured(token0, p.amount0RequestMax);
                 net1 = _pullMeasured(token1, p.amount1RequestMax);
             }
+        } else {
+            (net0, net1) = _pullLater(p);
+        }
 
+        // After the last token call that can move value (the second pull and its measurement).
+        _checkPayerDebit(payerStart0, payerStart1, p.maxDebit0, p.maxDebit1);
+
+        if (supply == 0) {
             uint256 grossShares = AMMMath.initialShares(net0, net1);
             if (grossShares <= MINIMUM_LIQUIDITY) revert InsufficientInitialLiquidity();
             shares = grossShares - MINIMUM_LIQUIDITY;
@@ -213,13 +240,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
             _mint(address(this), MINIMUM_LIQUIDITY); // permanent lock (U2, A5)
             _mint(p.recipient, shares);
         } else {
-            // Deficit entry check (M6-2) only here: with supply == 0 both reserves are 0, so a
-            // deficit cannot exist on the initial path.
-            _checkNoDeficit();
-            // Terminal pool (DECISIONS M6-1): a zero reserve can only come from sync(); refuse
-            // before any transfer instead of dividing by zero in _addLater.
-            if (reserve0 == 0 || reserve1 == 0) revert AMMMath.InsufficientLiquidity();
-            (net0, net1, shares) = _addLater(p, supply);
+            shares = _mintLater(p, supply, net0, net1);
         }
 
         emit LiquidityAdded(msg.sender, p.recipient, net0, net1, shares);
@@ -412,26 +433,16 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     // Internal
     // ------------------------------------------------------------------
 
-    /// @dev Later deposit, measured-net P1+ with X1 (DECISIONS M8-1, M8-2, M8-4, M8-8, M8-12):
+    /// @dev Later deposit, measured-net P1+ with X1 (DECISIONS M8-1, M8-2, M8-4, M8-8, M8-12),
+    ///      transfer part:
     ///      1. Step 2 (M4H-2 code, unchanged): the largest pair (T0, T1) at the current ratio
     ///         within both request caps, rounded down; a zero side reverts before any transfer.
     ///      2. Pull the first token (caller's order) and measure its net n_f.
     ///      3. Only if n_f != T_f, re-plan the second token: T_s = min(cap_s, sat(n_f · r_s / r_f)).
     ///         T_s == 0 reverts before the second transfer (no zero-amount transfer).
     ///      4. Pull the second token and measure n_s.
-    ///      5. shares σ = min(sat(n_i · S / r_i)); σ == 0 or σ < minShares reverts.
-    ///      6. Checked `S + σ` (Panic 0x11 for an overflowing, e.g. saturated, σ).
-    ///      7. Unmatched u_i = n_i − ceil(σ · r_i / S) must be ≤ maxExcess_i. ceil(σ·r_i/S) ≤ n_i
-    ///         because σ ≤ n_i·S/r_i and n_i is an integer, so the subtraction cannot underflow.
-    ///      8. Effects: reserve_i += n_i (X1: the unmatched part enters the reserves), mint σ.
-    ///      Rounding: σ rounds down, so per-share reserves never decrease:
-    ///      (r + n)·S − r·(S + σ) = n·S − r·σ ≥ 0.
     ///      Reserves are > 0 here: `addLiquidity` rejects a terminal pool (M6-1) before calling.
-    /// @param supply LP totalSupply before this deposit (> 0).
-    function _addLater(IAMMPool.AddLiquidityParams calldata p, uint256 supply)
-        private
-        returns (uint256 net0, uint256 net1, uint256 shares)
-    {
+    function _pullLater(IAMMPool.AddLiquidityParams calldata p) private returns (uint256 net0, uint256 net1) {
         uint256 r0 = reserve0;
         uint256 r1 = reserve1;
         uint256 amount0Max = p.amount0RequestMax;
@@ -475,6 +486,25 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
             }
             net1 = _pullMeasured(token1, target1);
         }
+    }
+
+    /// @dev Later deposit, accounting part (after the payer check):
+    ///      5. shares σ = min(sat(n_i · S / r_i)); σ == 0 or σ < minShares reverts.
+    ///      6. Checked `S + σ` (Panic 0x11 for an overflowing, e.g. saturated, σ).
+    ///      7. Unmatched u_i = n_i − ceil(σ · r_i / S) must be ≤ maxExcess_i. ceil(σ·r_i/S) ≤ n_i
+    ///         because σ ≤ n_i·S/r_i and n_i is an integer, so the subtraction cannot underflow.
+    ///      8. Effects: reserve_i += n_i (X1: the unmatched part enters the reserves), mint σ.
+    ///      Rounding: σ rounds down, so per-share reserves never decrease:
+    ///      (r + n)·S − r·(S + σ) = n·S − r·σ ≥ 0.
+    ///      The reserves read here equal those `_pullLater` used: nothing can write them in
+    ///      between (`nonReentrant`; no other writer runs inside this call).
+    /// @param supply LP totalSupply before this deposit (> 0).
+    function _mintLater(IAMMPool.AddLiquidityParams calldata p, uint256 supply, uint256 net0, uint256 net1)
+        private
+        returns (uint256 shares)
+    {
+        uint256 r0 = reserve0;
+        uint256 r1 = reserve1;
 
         // Step 5: shares from measured net only; the smaller side decides (no free value).
         shares = Math.min(_mulDivSat(net0, supply, r0), _mulDivSat(net1, supply, r1));
@@ -496,6 +526,20 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         reserve0 = r0 + net0;
         reserve1 = r1 + net1;
         _mint(p.recipient, shares);
+    }
+
+    /// @dev M8-3 payer check: the net decrease of `msg.sender`'s balance of each token over the
+    ///      whole call, from the snapshot before the first transfer to now (after the last token
+    ///      call), must not exceed `maxDebit_i`. A balance that rose counts as 0 (written as a
+    ///      comparison, so no underflow). Whole-call, not per-transfer: a callback of one token
+    ///      that debits the payer's other token outside that token's own transfer is still
+    ///      counted. Token0 is checked first; both checks raise the same error.
+    ///      Trust assumption: `balanceOf` is truthful (ARCHITECTURE §3).
+    function _checkPayerDebit(uint256 start0, uint256 start1, uint256 maxDebit0, uint256 maxDebit1) private view {
+        uint256 end0 = IERC20(token0).balanceOf(msg.sender);
+        if (start0 > end0 && start0 - end0 > maxDebit0) revert PayerDebitTooHigh();
+        uint256 end1 = IERC20(token1).balanceOf(msg.sender);
+        if (start1 > end1 && start1 - end1 > maxDebit1) revert PayerDebitTooHigh();
     }
 
     /// @dev Reverts with Panic 0x11 (checked arithmetic) if `supply + shares` overflows.
