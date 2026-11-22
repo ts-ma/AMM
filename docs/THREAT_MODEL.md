@@ -40,11 +40,51 @@ Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [
 | T1 | Reentrancy via token or recipient code | add, remove, swap, sync, skim | `nonReentrant` on every state-changing function; outbound transfers after effects; attacker mocks for cross-function reentry (bubbling, caught + correct transfer, caught + faulty transfer; DECISIONS M5-6, M6-5) | W07, S08, X01 (incl. M6 extension), L24 | Inbound `safeTransferFrom` precedes reserve update by necessity (ARCHITECTURE §7); view functions unguarded (T13) |
 | T2 | Earlier surplus counted as the current caller's input | add, swap | In-call balance snapshots (§5.2), each taken immediately before its own transfer (DECISIONS M6-8); BI-2 | R07, S07, B01, B03, B08, L13 | Relies on truthful `balanceOf` |
 | T3 | Price manipulation or share-value inflation via direct transfer + `sync()` | sync | Gate R=(b): `sync()` never absorbs surplus (BI-4) | R05, R10, B05 | In a deficit, `sync()` still changes reserves (T9) |
-| T4 | First-depositor inflation (tiny first position plus large direct transfer to dilute later LPs) | first/later mint | 1,000 LP locked; direct transfers never enter reserves (T3); `shares > 0` and `minShares` | L01, L02, L13 | Layered mitigations, not a formal proof; very small deposits are rejected. **M8 (DECISIONS M8-2, X1):** unmatched deposit contributions, bounded by the depositor's own `maxExcess`, enter the reserves. This reopens a bounded way to donate into reserves through `addLiquidity`. Analysis (not a proof): to raise the value of one share by Δ, an attacker loses at least about 1000·Δ, because the locked 1,000 LP keep their pro-rata part of the donation; a victim's extra floor-rounding loss is at most about Δ, and `minShares` / `shares > 0` still bound it. This is Uniswap-V2-level protection, weaker than before M8. **Profitability (analysis, not a formal proof):**
+| T4 | First-depositor inflation (tiny first position plus large direct transfer to dilute later LPs) | first/later mint | 1,000 LP locked; direct transfers never enter reserves (T3); `shares > 0` and `minShares` | L01, L02, L13 | Layered mitigations, not a formal proof; very small deposits are rejected. **M8 (DECISIONS M8-2, X1):** unmatched deposit contributions, bounded by the depositor's own `maxExcess`, enter the reserves. This reopens a bounded way to donate into reserves through `addLiquidity`. Analysis (not a proof): to raise the value of one share by Δ, an attacker loses at least about 1000·Δ, because the locked 1,000 LP keep their pro-rata part of the donation; a later depositor's extra floor-rounding shortfall per deposit is at most about Δ; the depositor's own `maxExcess` bounds it, and `minShares` protects only against changes between quoting and execution. This is Uniswap-V2-level protection, weaker than before M8. **Profitability (revised 2026-11-22 after M8 L13b; analysis plus measurements, not a formal proof).** The earlier conclusion "donating never increases profit" is **withdrawn**: it compared the donation's cost with the gain from a single later deposit only.
 - An attacker's own `maxExcess` bounds only its own donation.
-- If the attacker owns the fraction `f` of shares after donating, at least the lock's `1000/S'` of the donation is lost to it. So raising token i's per-share value by `Δ_i` costs at least `1000·Δ_i`.
-- The only gain inflation can create is part of later depositors' floor-rounding loss. That loss is below one share's worth in each token plus one smallest unit of the floored token ([proven] `u_i < r_i/S + r_i/r_j` for exact-delivery tokens; the victim's own `maxExcess` bounds it otherwise). The donation raises it by at most `Δ_i`.
-- So the marginal profit of donating is at most `f·Δ_i − 1000·Δ_i < 0`: **donating never increases profit**. The attacker earns at most the ordinary LP share of rounding dust that exists without any attack.
+- Cost: whoever donates loses at least the lock's pro-rata part of the donation. So raising token i's per-share value by `Δ_i` costs at least about `1000·Δ_i`, and more when other LPs hold shares.
+- Gain: each later deposit has a per-token pre-deposit shortfall `n_i − σ·r_i/S = u_i + δ_i` with `0 ≤ δ_i < 1` smallest unit. For exact-delivery tokens this is below one share's worth plus one smallest unit of the floored token ([proven] `u_i < r_i/S + r_i/r_j`); otherwise the depositor's own `maxExcess` bounds `u_i`. The donation raises it by at most about `Δ_i` per deposit. A holder of `h` shares gains `h/(S+σ)·(u_i + δ_i)` in token i from that deposit (book value). The **cumulative gain therefore depends on each later deposit's shortfall and on the holder's fraction at the time of that deposit**, and grows with the number of later deposits, while the donation's cost is paid once.
+- **Executed (Foundry, real `AMMPool` contract with a `MockFeeERC20` bonus, `test/AMMPoolInflation.t.sol`, L13b).**
+  - The bonus mints to the Pool during the attacker's own transfer. This token behaviour is outside Tier 0/1, and the channel has no overhead beyond the donated amount, which is counted as paid.
+  - Setup:
+    - the attacker deposits (1e6, 1e6), then donates 1e25 per token;
+    - the later deposits all come **from one address**, each `w ∈ [1e21, 1e21 + 2^64 − 1]` of token0 plus the matched token1;
+    - that address **redeems all its shares together at the end**, after the attacker has exited;
+    - both tokens are valued 1:1, with no price movement.
+  - Attacker P&L, from executed `removeLiquidity`, both tokens summed at 1:1:
+
+    | Scenario | Attacker P&L (wei) |
+    |---|---|
+    | No donation | −2,000 (the lock) |
+    | 1 deposit | −19,998,152,847,762,923,531,356 |
+    | 1,000 deposits | −11,105,279,878,487,883,917,245 |
+    | **5,000 deposits from one address, unbounded `maxExcess`** | **+18,166,023,885,590,118,188,675** |
+    | 5,000 deposits with a 10 bps `maxExcess` (558 accepted, 4,442 reverted) | −19,453,511,173,263,290,587,278 |
+
+  - The per-token split is not asserted on-chain; an independent model gives about +9.08e21 in each token for the profitable case.
+  - The test records the attacker's gas for its four transactions in this mock scenario (815,882), but **the P&L does not deduct gas**.
+  - `minShares` equal to a quote taken after the inflation did not prevent the shortfall, and a direct transfer followed by `sync()` did not inflate the reserves.
+- Ordinary ERC-20 tokens, source reasoning:
+  - recorded reserves are written only by the initial deposit, the later deposit, `removeLiquidity`, `swapExactInput` and `sync()`;
+  - `sync()` only lowers a reserve and `skim()` writes none;
+  - inbound amounts are measured around the Pool's own transfer, so earlier surplus is not counted;
+  - for exact-delivery tokens the unmatched part of one deposit obeys the bound above, whatever `maxExcess` the caller sets;
+  - swap fees raise the reserves without minting shares. This has been so since M5 and is the same as in Uniswap-V2-style pools.
+- Model only, not executed on-chain:
+  - about 32,040 (input 10× the reserve) or 58,288 (1×) round-trip swaps reach an L13b-scale state, with a peak temporary token0 inventory of 2e25–1.1e26;
+  - when the attacker is the only non-locked LP, its unrecoverable cost in each token equals what stays in the Pool after it exits;
+  - with fixed-tax tokens the M8 unmatched contribution burns about as much of the other token as it donates.
+- **Not verified:** executability and net profitability with supported tokens. That would need all of:
+  - an executed supported-token inflation path;
+  - measured gas;
+  - capital and holding-period costs;
+  - price movement and impermanent loss;
+  - arbitrage;
+  - other LPs (a 1% honest LP turned the modelled result negative);
+  - enough later deposits with loose or unbounded `maxExcess`;
+  - an explicit valuation of the two tokens;
+  - redemptions that actually execute rather than book claims (T6).
+- Status: known economic limitation of the Uniswap-V2 class; not a demonstrated exploit with supported tokens.
 - Donating token i does not change token j's per-share value, so it cannot inflate the rounding loss in token j.
 - Griefing (making deposits of value `V` revert with `σ = 0`) costs at least about `1000·V`.
 - Assumptions: donated tokens have real cost to the attacker (an attacker who can mint a pool token freely breaks any pool containing it anyway), and balances are truthful.
@@ -52,7 +92,7 @@ Status labels: [DECISIONS.md](DECISIONS.md) §0. Invariants BI-x and sections: [
 
 To be tested by an L13 extension [needs tests] |
 | T5 | Inbound tax over-credited | add, swap | Account only measured net | S05, L05 | Only the U8 model. M8: measured net regardless of rate (§7.2) |
-| T6 | Adaptive deposit over-debits or mints unfair shares | add (Tier 1) | L-α seven conditions; `[T, T+1]` check; wrong hint reverts. **M8: L-α retired** (DECISIONS M8-1); replaced by the measured-net bounded deposit: no tax hint on-chain; shares from measured net; payer debit bounded over the whole call (`maxDebit`, M8-3); unmatched contribution bounded (`maxExcess`, M8-2) | L05, L09–L12, Z05 (to be rewritten in M8) | Rounding dust, not zero. Before M8 the Pool could not observe the sender's debit; M8 measures it (T28) |
+| T6 | Adaptive deposit over-debits or mints unfair shares | add (Tier 1) | L-α seven conditions; `[T, T+1]` check; wrong hint reverts. **M8: L-α retired** (DECISIONS M8-1); replaced by the measured-net bounded deposit: no tax hint on-chain; shares from measured net; payer debit bounded over the whole call (`maxDebit`, M8-3); unmatched contribution bounded (`maxExcess`, M8-2) | L05, L09–L12, Z05 (to be rewritten in M8) | Rounding dust, not zero. **Book shortfall vs executable redemption:** with both reserves positive, `removeLiquidity` passes its rounding check only if both integer gross outputs `⌊shares·r_i/S⌋` are at least 1 smallest unit; otherwise it reverts `InsufficientLiquidityBurned` and the user still holds its shares. Example (Tier 0, caps (MAX, 1e6), so the Pool pulls (1, 1e6) and mints σ = 909): at reserves (1100, 909,338,911) with S = 1e6, an immediate redemption of the 909 shares computes (0, 826,746); at the mathematical state (1100, 1e9) with S = 1e6 (reachability not checked) it computes (0, 909,082). Both revert `InsufficientLiquidityBurned`. The 17.3% token1 shortfall in the first case (pre-deposit reference difference `n_1 − σ·r_1/S`) is therefore a **book shortfall**. Only if the redemption succeeds and the transfers arrive in full may the book shortfall `S/(S+σ)·(u_i + δ_i)` plus a rounding difference below one smallest unit be stated as the user's actual loss. Before M8 the Pool could not observe the sender's debit; M8 measures it (T28) |
 | T7 | Outbound tax leaves the recipient short | swap, remove | MIN-NET: compare the recipient's actual increase with the user minimum (BI-6) | S04, S06, W04, W05, B07 | Recipient balance measurements are unreliable for special recipients (e.g. the token's own tax collector); unsupported |
 | T8 | Fee missing or miscomputed | swap | Exact formula (§6.4); fee-adjusted inequality with proof (§6.5); five reference cases incl. tightness (`out + 1` fails); exact-formula fuzz at Pool level | S02, S10, S11, S14, S15, Z01 | Tests sample behaviour; no on-chain assertion (A9 = tests only, DECISIONS M5-9): without A9 the swap lacks one additional on-chain invariant check, so certain implementation errors that no other check detects might not be stopped at run time by this invariant |
 | T9 | Deficit (`balance < reserve`) | add, remove, swap | Entry check `ReserveDeficit()` reverts those three before any effect or transfer (DECISIONS M6-2); `sync()` lowers reserves and emits `ReserveSynced` (U4) | R08, R17, B05 | Should not occur with supported tokens; if it does, LPs bear the loss once `sync()` is called. Tested: deficits present at entry, in either or both tokens, for every operation. Not covered by the entry check: a deficit created during the call by an unsupported token (e.g. a hook that reduces the Pool's balance of the other token); A8, `[T, T+1]` and MIN-NET check only the transfer they surround, so such a deficit is not proven to be detected in that call and is first rejected by the next call's entry check (until `sync()`). `getAmountOut` has no deficit check and may quote from stale reserves while swaps revert (`test_R08_quoteDoesNotCheckDeficit`) |

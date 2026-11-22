@@ -22,8 +22,11 @@ import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 ///           a fee mock's bonus, switched on only for the attacker's two donation deposits: it is
 ///           free, so it is the attacker-FAVOURABLE bound; the donated D per token is counted as
 ///           paid. Real channels add overhead (tax burned, swap fees), which only lowers the P&L.
-///         - A4 Victims = bob: N deposits, request (w, MAX), token0 first, w from a fixed LCG in
-///           [1e21, 1e22]; maxExcess per token = floor(w · tolBps / 10000) or unbounded.
+///         - A4 Victims = bob: N deposits from one address, redeemed together at the end; request
+///           (w, MAX), token0 first, w from a fixed LCG in [1e21, 1e21 + 2^64 − 1] (the LCG
+///           output is below 2^64, so the modulus never reduces it); for N = 5,000,
+///           Σw ≈ 5.046e24 is the total token0 request; maxExcess per token =
+///           floor(w · tolBps / 10000) or unbounded.
 ///         - A5 Gas is not in the P&L; the attacker's own gas is measured and reported separately.
 ///         The exact P&L values are cross-checked against an independent integer model of the
 ///         same steps (Python; see the commit report). The tests state the measured sign; they
@@ -170,10 +173,11 @@ contract AMMPoolInflationTest is Test {
     // ------------------------------------------------------------------
 
     /// @dev Finding (contradicts the earlier THREAT_MODEL T4 sentence "donating never increases
-    ///      profit", which holds only for one victim): with 5,000 victims who accept any unmatched
-    ///      amount, the attacker's P&L is POSITIVE. Each victim loses up to one share's worth to
-    ///      rounding; the attacker owns ~99.9% of the pool for most of them, while the donation
-    ///      costs it only the lock's 0.1% share. Victims together lose more than the attacker gains.
+    ///      profit", which holds only for one victim): with 5,000 deposits from one address that
+    ///      accept any unmatched amount, the attacker's P&L is POSITIVE. Each deposit loses up to
+    ///      one share's worth to rounding; the attacker's INITIAL share of the pool is ~99.9%
+    ///      (it falls as the deposits mint shares), while the donation costs it only the lock's
+    ///      0.1% share. The depositing address loses more than the attacker gains.
     function test_L13b_5000Victims_unboundedExcess_profitable() public {
         Result memory r = _scenario(D, 5000, MAX);
         assertEq(r.attackerPnl, 18_166_023_885_590_118_188_675, "matches the independent model");
