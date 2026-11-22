@@ -21,7 +21,8 @@ import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 ///           enter reserves and `sync` only lowers them. In the multi-victim tests the channel is
 ///           a fee mock's bonus, switched on only for the attacker's two donation deposits: it is
 ///           free, so it is the attacker-FAVOURABLE bound; the donated D per token is counted as
-///           paid. Real channels add overhead (tax burned, swap fees), which only lowers the P&L.
+///           paid. The multi-deposit test uses the bonus mock. The costs and resulting P&L of
+///           other channels depend on the channel and its assumptions.
 ///         - A4 Victims = bob: N deposits from one address, redeemed together at the end; request
 ///           (w, MAX), token0 first, w from a fixed LCG in [1e21, 1e21 + 2^64 − 1] (the LCG
 ///           output is below 2^64, so the modulus never reduces it); for N = 5,000,

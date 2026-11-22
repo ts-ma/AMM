@@ -44,12 +44,20 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     uint256 private reserve0;
     uint256 private reserve1;
 
-    /// @notice Emitted on every successful deposit (DECISIONS M3-4).
-    /// @param sender Account whose tokens were pulled (`msg.sender`).
+    /// @notice Emitted once at the end of every successful `addLiquidity`, initial or later
+    ///         (DECISIONS M3-4, M8-9), after the reserves are updated and the shares minted.
+    ///         Fields are in sorted token order whatever `token1First` is.
+    /// @param sender The payer: `msg.sender`, whose tokens were pulled.
     /// @param recipient Account that received the LP shares.
-    /// @param net0 Measured token0 increase of the Pool in this call.
-    /// @param net1 Measured token1 increase of the Pool in this call.
-    /// @param shares LP shares minted to `recipient` (excluding the 1,000 lock).
+    /// @param net0 token0 the Pool measured as received from its own `transferFrom` in this call
+    ///        (Pool balance after minus before that transfer). Equals the increase of `reserve0`,
+    ///        including any unmatched part (X1). Not the payer's debit, which can differ and is
+    ///        bounded only by `maxDebit0`; not the Pool's whole-call balance change, which is
+    ///        larger if someone else sends token0 to the Pool during the call (that stays
+    ///        surplus, BI-2′).
+    /// @param net1 Same as `net0`, for token1.
+    /// @param shares LP shares minted to `recipient`; on the initial deposit this excludes the
+    ///        1,000 shares minted to the Pool as the permanent lock.
     event LiquidityAdded(address indexed sender, address indexed recipient, uint256 net0, uint256 net1, uint256 shares);
 
     /// @notice Emitted on every successful withdrawal (DECISIONS M4-3).

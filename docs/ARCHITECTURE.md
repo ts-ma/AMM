@@ -1,8 +1,8 @@
 # ARCHITECTURE — AMM Specification (Pre-Implementation)
 
-**Last updated:** 2026-11-21
+**Last updated:** 2026-11-22
 
-**Status:** Target architecture, partly implemented (M2–M7 accepted). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
+**Status:** Target architecture, partly implemented (M2–M7 accepted; M8 implemented on branch `m8-measured-deposit`, WIP until accepted). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
 Status labels are defined in [DECISIONS.md](DECISIONS.md) §0; DECISIONS.md is authoritative for status. Anything `PROPOSED` or `PENDING` needs student approval before implementation.
 
@@ -38,7 +38,14 @@ Not introduced without separate approval: Router, Oracle, flash swaps, owner/gov
 |---|---|---|
 | Tier 0 | Standard ERC-20: amount debited = amount credited. Tested with 18- and 6-decimal mocks. | `APPROVED` |
 | Tier 1 | The U8 model, all four conditions: (1) inclusive — `transfer(g)` debits the sender exactly `g`; (2) recipient receives `g − floor(g × taxBps / 10000)`; (3) `taxBps` fixed, the same for every address, `< 10000`; (4) truthful `balanceOf`. | `APPROVED` (U8) |
-| Unsupported | Exclusive FOT (debits sender more than `g`), rebasing, untruthful `balanceOf`, ERC-777 hooks, blacklisting/freezing, address-dependent exemptions, changing tax rates. | `OUT-OF-SCOPE` |
+| Unsupported | Exclusive FOT (debits sender more than `g`), rebasing, untruthful `balanceOf`, ERC-777 hooks, blacklisting/freezing, address-dependent exemptions, changing tax rates (for deposits under M8 see the note below), tokens that credit the recipient more than was sent (bonus / mint-on-transfer) or change the Pool's balance during its own transfer (hooks, rebases) — such an extra is measured as received and enters the reserves (THREAT_MODEL T4). | `OUT-OF-SCOPE` |
+
+**M8 note (DECISIONS M8-1 to M8-12; per-operation scope in THREAT_MODEL §7.2).**
+- `addLiquidity` no longer relies on the U8 conditions. It measures what actually arrives.
+- So deposits also accept an inclusive tax of unknown, random or changing rate (category 2: the user's bounds may make the deposit revert).
+- They also accept an extra sender-side charge on inbound transfers only, bounded by `maxDebit` (category 2).
+- Accepting a deposit does **not** imply that the liquidity can be redeemed later (THREAT_MODEL §7.4).
+- Outbound handling (A8, MIN-NET) is unchanged.
 
 Unsupported tokens either cause a revert (some are deliberately detected, e.g. by A8) or behave outside the guarantees of this document. Compatibility claims must state direction, operation and assumptions. `SafeERC20` handles missing or `false` return values; it does not make any token's economics correct.
 
@@ -298,23 +305,62 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 - **Limit:** the four recipient checks catch only those four values. A valid but wrong address, a lost key, or an address the token refuses to pay cannot be detected; an immutable mistake requires redeployment.
 - **Tests:** K01–K04.
 
-### 7.2 `addLiquidity(amount0Max, amount1Max, tax0Bps, tax1Bps, minShares, recipient, deadline) → (net0, net1, shares)`
+### 7.2 `addLiquidity(IAMMPool.AddLiquidityParams calldata p) → (net0, net1, shares)`
+
+Measured-net deposit, P1+ with X1 (DECISIONS M8-1 to M8-13; implemented in M8 commits 2–4; M8 is WIP until accepted). Fields and selector: DECISIONS M8-8. `S` = LP `totalSupply()`, `r_i` = recorded reserves, `n_i` = measured net.
 
 1. `nonReentrant`.
-2. Checks: deadline; recipient (U7); `amount0Max > 0`, `amount1Max > 0`; `tax_iBps < D`; no deficit in either token.
-3. If `S == 0`: gross `g_i = amountMax_i` (§6.1). Else: compute `T_i`, `g_i` (§6.2 steps 1–3).
-4. Inbound interaction, per token: snapshot Pool balance → `safeTransferFrom(msg.sender, this, g_i)` → snapshot → `net_i`. If `S > 0`: require `T_i ≤ net_i ≤ T_i + 1`.
-5. Compute shares (§6.1 or §6.2 step 5); require `> 0` and `≥ minShares`.
-6. Effects: `reserve_i += net_i`; if initial, `_mint(address(this), 1000)`; `_mint(recipient, shares)`; emit event.
+2. **Checks, in this order, before any transfer.**
+   - Deadline → `DeadlineExpired()`.
+   - Recipient (U7) → `InvalidRecipient()`.
+   - Either `RequestMax` 0 → `ZeroAmount()`.
+   - If `S > 0`:
+     - deficit in either token → `ReserveDeficit()` (M6-2);
+     - either reserve 0 → `InsufficientLiquidity()` (terminal pool, M6-1).
+3. **Snapshots (view calls only).** The Pool's balances of both tokens (BI-2′, M8-11) and `msg.sender`'s balances of both tokens (M8-3).
+4. **Pulls** (`_pullMeasured`: Pool balance before → `safeTransferFrom(msg.sender, this, amount)` → after; `n` = difference).
+   - If `S == 0`: pull both `RequestMax` in the caller's order (`token1First`).
+   - If `S > 0`:
+     1. Step 2: the largest pair `(T0, T1)` at the current ratio within both caps, rounded down (M4H-2 code). A zero side → `InsufficientDepositAmount()`.
+     2. Pull the first token in the caller's order and measure `n_f`.
+     3. Only if `n_f ≠ T_f`, re-plan the second token: `T_s = min(RequestMax_s, sat(n_f·r_s/r_f))`. A zero result → `InsufficientDepositAmount()` before the second transfer.
+     4. Pull the second token and measure `n_s`.
+5. **After the last token call, in this order.**
+   - Each token, token0 first: `B^end < B^start || B^end − B^start < n_i` → `InCallBalanceLoss()`.
+   - Each token, token0 first: payer net decrease `> maxDebit_i` → `PayerDebitTooHigh()`.
+6. **Shares and effects.**
+   - Initial: `gross = ⌊√(n0·n1)⌋`.
+     - `gross ≤ 1000` → `InsufficientInitialLiquidity()`.
+     - `shares = gross − 1000`; `shares < minShares` → `InsufficientShares()`.
+     - `reserve_i = n_i`; mint the 1,000 lock to the Pool; mint `shares` to `recipient`.
+   - Later: `σ = min_i sat(n_i·S/r_i)`.
+     - `σ == 0 || σ < minShares` → `InsufficientShares()`.
+     - Checked `S + σ` → Panic 0x11.
+     - `u_i = n_i − ⌈σ·r_i/S⌉ > maxExcess_i` → `ExcessContributionTooHigh()`, token0 first.
+     - `reserve_i += n_i` (X1: the unmatched part included); mint `σ` to `recipient`.
+7. Emit `LiquidityAdded(msg.sender, recipient, net0, net1, shares)` once, after the effects, in sorted token order (§9).
 
-- **Postconditions:** BI-2 (surplus unchanged); caller debited `g_i ≤ amountMax_i` per token (under U8); BI-7 after the first deposit.
-- **Threats:** wrong hint, over-debit, attributing earlier surplus, reentrancy via token callback, dilution, first-depositor manipulation.
-- **Tests:** L01–L14, B01, P05.
+- **Postconditions:**
+  - BI-2′ (§5.5).
+  - The amount requested per token is `≤ RequestMax_i`.
+  - The payer's net debit per token is `≤ maxDebit_i`.
+  - Later deposits: `u_i ≤ maxExcess_i`, and per-share reserves never decrease for existing LPs (`σ` rounds down).
+  - BI-7 after the first deposit.
+- **Threats:** T2, T4 (revised after L13b), T5, T6, T28, T29; reentrancy via token callback (T1).
+- **Tests:** TEST_MATRIX §3.2 (M8: L30–L43, L13b, Z08, Z09, X03, X06, X07, B10) and the M3/M4 tests migrated per §3.3.
+- **History (pre-M8 L-α flow, retired by DECISIONS M8-1; kept for the record):**
+  1. `nonReentrant`.
+  2. Checks: deadline; recipient (U7); `amount0Max > 0`, `amount1Max > 0`; `tax_iBps < D`; no deficit in either token.
+  3. If `S == 0`: gross `g_i = amountMax_i` (§6.1). Else: compute `T_i`, `g_i` (§6.2 steps 1–3).
+  4. Inbound interaction, per token: snapshot Pool balance → `safeTransferFrom(msg.sender, this, g_i)` → snapshot → `net_i`. If `S > 0`: require `T_i ≤ net_i ≤ T_i + 1`.
+  5. Compute shares (§6.1 or §6.2 step 5); require `> 0` and `≥ minShares`.
+  6. Effects: `reserve_i += net_i`; if initial, `_mint(address(this), 1000)`; `_mint(recipient, shares)`; emit event.
+  - Postconditions then: BI-2 (surplus unchanged); caller debited `g_i ≤ amountMax_i` per token (under U8); BI-7 after the first deposit. Threats then: wrong hint, over-debit, attributing earlier surplus, reentrancy via token callback, dilution, first-depositor manipulation. Tests then: L01–L14, B01, P05.
 - **Staging:** M4 implements and tests Tier 0 (`tax = 0`) with the full signature (U10); Tier 1 is tested in M8.
 - **M3:** only the initial (`S == 0`) branch; `S > 0` reverted `LaterDepositNotImplemented()` (DECISIONS M3-3). Exact checks, errors and event: DECISIONS M3-4. The deficit entry check is added in M6 (with reserves 0, no deficit can exist in M3).
 - **M4:** `S > 0` with both hints 0 follows §6.2 with `t = 0` (`g_i = T_i`); errors per DECISIONS M4-2. `S > 0` with any non-zero hint reverts `TaxedLaterDepositNotImplemented()` before any transfer until M8 (DECISIONS M4-1).
 - **M6:** in the `S > 0` branch only, in this order before any transfer: deficit → `ReserveDeficit()` (M6-2); either reserve 0 → `InsufficientLiquidity()` (terminal pool, M6-1); then the temporary hint check. With `S == 0` both reserves are 0, so no deficit can exist and the check is skipped.
-- **M8 (ABI approved; DECISIONS M8-1 to M8-13):** the signature becomes `addLiquidity(IAMMPool.AddLiquidityParams calldata p)` (fields and selector in DECISIONS M8-8); this section is rewritten together with the implementation. Rules fixed for that rewrite:
+- **M8 (ABI approved; DECISIONS M8-1 to M8-13):** the signature becomes `addLiquidity(IAMMPool.AddLiquidityParams calldata p)` (fields and selector in DECISIONS M8-8); the flow above is the rewrite (2026-11-22). Rules fixed for it:
   - The per-token request field is a cap on what the Pool may request, **not a promise that this amount is transferred**. Step 2 and the re-plan may request less, and the payer's actual debit can differ from the request; the debit is bounded only by `maxDebit`.
   - The payer is always `msg.sender`. With a router, the router is the payer and `maxDebit` protects the router, not the end user. The LP `recipient` may differ from the payer.
   - On the initial deposit the excess fields have no effect (`u_i = 0` by definition).
@@ -448,6 +494,13 @@ No public one-time `initialize()`; use the parameterised constructor.
 Typed events for: pair creation, liquidity added, liquidity removed, swap, deficit reconciled (`sync`), surplus sent (`skim`). Fields are fixed per milestone.
 
 - `LiquidityAdded(address indexed sender, address indexed recipient, uint256 net0, uint256 net1, uint256 shares)` — `APPROVED` (M3-4); used for initial and later deposits.
+  - It is emitted once at the end of `addLiquidity`, after the reserves are updated and the shares minted, in sorted token order whatever `token1First` is.
+  - `sender` is the payer, `msg.sender`.
+  - `net_i` is what the Pool measured as received from its own `transferFrom` of token i in this call. It equals the increase of `reserve_i`, including any unmatched part (X1).
+  - `net_i` is **not** the payer's debit, which can differ and is bounded only by `maxDebit_i`.
+  - `net_i` is **not** the Pool's whole-call balance change either. That change is larger if someone else sends token i to the Pool during the call, and such an arrival stays surplus (BI-2′).
+  - `shares` excludes the 1,000 lock on the initial deposit.
+  - Whether to add an event for the payer debit and the excess is decided after G05 (M8-9 / R7, `PENDING`).
 - `LiquidityRemoved(address indexed sender, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1)` — `APPROVED` (M4-3); amounts are the Pool-side reserve decreases. The recipient's actual receipt is the function's return value; MIN-NET is enforced on-chain from balance snapshots, not from events.
 - `ReserveSynced(address indexed token, uint256 previousReserve, uint256 newReserve)` — `APPROVED` (M6-4); one per lowered token, only when a reserve actually changes; the LP loss is `previousReserve − newReserve`.
 - `SurplusSkimmed(address indexed token, uint256 amount)` — `APPROVED` (M6-4); one per token with surplus; `amount` is the Pool-side decrease (A8); the recipient is always `surplusRecipient`.
