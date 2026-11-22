@@ -469,6 +469,7 @@ If any setting changes, earlier measurements are not comparable with later ones;
 | G01 | `swapExactInput` gas with and without the on-chain §6.5 assertion | Input to the A9 decision | M5 | Measured 2026-11-19 (§14.2); A9 decided: tests only (DECISIONS M5-9) |
 | G03 | Cost of the M6 deficit entry check; M6-3 snapshot-reuse variant B vs. A | Input to the B decision (DECISIONS M6-3) | M6 | Measured 2026-11-19 (§14.3); B not adopted (DECISIONS M6-8) |
 | G04 | `createPair` gas (one measurement, configuration recorded) | Report only; no optimisation (DECISIONS M7-7) | M7 | Measured 2026-11-20 (§14.4) |
+| G05 | M8 `addLiquidity` paths vs. the G03 baseline; balance-reading reuse variants VA / VB / VC | Input to the optimisation decision and to R7 (DECISIONS M8-9) | M8 | Measured 2026-11-22 (§14.5); no variant adopted yet |
 | G02 | Gas snapshot of all public functions | Report and later optimisation baseline | M10 | `NOT IMPLEMENTED` |
 
 ### 14.1 M4 hardening measurements (2026-11-19)
@@ -554,6 +555,64 @@ Configuration: §14 table, checked with `forge config` immediately before measur
 | `AMMFactory` deployment | 2,360,843 (10,926 B) |
 
 Almost all of the cost is the deployment of the Pool's code (runtime 8,563 B); the registry writes (two `getPair` entries, `allPairs` push) and the code-existence check are a small part. No optimisation is proposed (report only, M7-7).
+
+### 14.5 G05 — M8 `addLiquidity` paths and balance-reading reuse (2026-11-22, branch `m8-measured-deposit`, base commit `8f294b9`)
+
+**Configuration.** Checked with `forge config` in every measured copy immediately before measuring: `solc` 0.8.38, optimizer on, 200 runs, `evm_version = osaka`, `via_ir = false`, `isolate = true` (forge default; not set in `foundry.toml`, `FOUNDRY_ISOLATE` unset), OZ v5.7.0. Foundry: `forge 1.9.0` (commit `6056c58`).
+
+**Method.**
+- Clean code copies were exported with `git archive` into the scratchpad:
+  - `m6-sync-skim-accepted` (`d24ca3a`);
+  - `m7-factory-accepted` (`26ac725`);
+  - `HEAD` (`8f294b9`).
+- The repository's `src/` and `test/` were not modified, and no measurement test was committed.
+- Commands, run in each copy:
+  - baseline: `forge test --match-contract GasM6 -vv`;
+  - M8: `forge test --match-contract GasM8 -vv`;
+  - sizes: `forge build --sizes`.
+- Every value was measured twice with identical results.
+
+**Baseline conditions (G03, §14.3; harness `GasM6`, archived from M6 and reused unchanged).**
+- Metering: `gasleft()` immediately before and after one external call. The `vm.prank` is set before the first reading, and the ABI encoding of the arguments lies inside the interval.
+- It is a top-level call of the test under `isolate = true`, so storage and accounts are cold, as in G03.
+- Tier 0 `MockERC20` tokens, 18 decimals.
+- Pool seeded in `setUp` by alice with `(1000e18, 2000e18)`.
+- The payer is alice: an existing LP with token balances of about 1e30 (non-zero) and approvals of `type(uint256).max`.
+- The recipient is alice, whose LP balance is non-zero.
+- The later deposit uses caps `(1e18, 1e19)`, so the token0 cap binds and the Pool pulls `(1e18, 2e18)`.
+
+The G03 value 98,525 reproduces exactly on both `m6-sync-skim-accepted` and `m7-factory-accepted`, which are the same addLiquidity code before M8. Remove, swap and deploy also reproduce, at 98,320 / 88,862 / 88,899 / 1,999,255.
+
+**M8 harness (`GasM8`).** Same conditions and the same `setUp` deposit, using the M8 ABI (`addParams`: `maxDebit` / `maxExcess` unbounded, token0 first unless stated). The params struct is built in memory before the first `gasleft()`; its ABI encoding is inside the interval. A calibration call (`t0.balanceOf(alice)` as a top-level call) measures 9,693 in the G03 harness and 9,664 in the M8 harness. These are harness-context differences of this order, not Pool code. Absolute values are Foundry measurements of a top-level call under isolation, not mainnet transaction receipts.
+
+| Path | Conditions | M8 committed | Comparable with G03? | Δ vs 98,525 |
+|---|---|---:|---|---:|
+| P1 later, token0 first, token0 cap binds | identical to G03 | 108,789 | yes | **+10,264 (+10.4%)** |
+| P2 later, `token1First`, token0 cap binds | as P1, other pull order | 108,810 | no (path not in G03) | — |
+| P3 later, token1 cap binds, caps `(1e19, 2e18)` | pulls `(1e18, 2e18)` | 109,005 | no | — |
+| P4 later, new recipient `dave` (LP balance 0 → non-zero) | as P1 | 125,889 | no | — |
+| P5 initial deposit `(1000e18, 2000e18)` into an empty Pool | payer alice | 231,979 | no | — |
+| P6 later, `MockFeeERC20` with tax 0 | as P1, other token contract | 150,521 | no (mock token code costs more) | — |
+| P7 later, token0 (first) inclusive 1% tax → re-plan | `MockFeeERC20` | 178,280 | no | — |
+| P8 later, token1 (second) inclusive 1% tax → excess on token0 | `MockFeeERC20` | 177,899 | no | — |
+| Deployment `new AMMPool(...)` | same constructor arguments | 2,426,562 | yes | +427,307 (+21.4%) vs 1,999,255 |
+| Runtime / initcode size | `forge build --sizes` | 10,553 B / 11,709 B | yes | +1,990 B / +2,074 B vs 8,563 B / 9,635 B |
+
+**Balance-reading reuse (temporary variant copies; full suite of 406 tests run with default fuzz runs on each).**
+
+| Variant | Reading reused | External calls between the two readings | Check effect | Tests | Saving per path (measured) | Size / deployment |
+|---|---|---|---|---|---|---|
+| VA | The second-pulled token's after-reading inside its `_pullMeasured` is reused as its BI-2′ end reading | None that can change state: only the function return and the `balanceOf` STATICCALL of the other token | Same value under truthful and stable `balanceOf` (the M8-11 assumption); the first-pulled token still re-reads after the second transfer | 406/406 | P1 −684, P2 −705, P3 −684, P4 −684, P5 −704, P6–P8 −718 | runtime +328 B, deployment +71,033 |
+| VB | The first-pulled token's whole-call start snapshot is reused as the before-reading of its own pull | Only the two payer `balanceOf` STATICCALLs | Same value under the same assumption; the second token still takes a fresh before-reading | 406/406 | P1 −773, P2 −772, P3 −773, P4 −773, P5 −917, P6–P8 −807 | runtime +104 B, deployment +22,569 |
+| VC | Later path: the deficit entry check compares the start snapshot instead of reading again in `_checkNoDeficit` | None | Same comparison. One difference: both balances are now read before the comparison, so with token0 in deficit and a reverting `token1.balanceOf` the error changes from `ReserveDeficit()` to the token's revert. That is an unsupported token (THREAT_MODEL §7.2), and no existing test covers it | 406/406 | P1–P4 −1,856, P5 0 (no deficit check on the initial path), P6–P8 −1,924 | runtime +39 B, deployment +8,475 |
+| VW (control, deliberately wrong) | The **first**-pulled token's after-reading reused as its end reading, across the second transfer | The second token's `transferFrom`, a CALL that can move the first token's balance | Broken: a foreign in-call loss is missed | 400/406; 6 failures, all in `AMMPoolInCallBalance`: B09c (initial, later), B09d (two cases), `testFuzz_B09e_largeBalances`, L40 | — | — |
+
+**Decision conflicts and combination.**
+- VB reverses the per-transfer fresh-snapshot rule (DECISIONS M6-8).
+- VA and VC change the M8-11 implementation note (end reading taken separately; deficit-check reading kept separate). Adopting any variant needs the student's decision.
+- The combination of VA + VB + VC was **not** measured. Its saving is an estimate only: about the sum, roughly 3,300 on P1.
+
+Status: measured; no variant adopted (decision pending). The cost of an R7 event was not measured here (M8-9). These are single-scenario measurements, not a full gas snapshot (G02, M10).
 
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
