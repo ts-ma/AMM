@@ -210,6 +210,22 @@ Attacker gas for its four transactions: 815,882 (with donation), 492,873 (withou
 5e: L31, L33, L34, L35, L39, L40 (full chain), L41.
 5f: limitation tests B10, X06 (A/B/C), X07. One expectation error found and corrected in the test (not the contract): a full withdrawal under an exclusive outbound extra fails inside the token before A8 can run.
 
+### 3.4 M8 F1 follow-up tests (F1-T1 to T9; scope approved 2026-11-23)
+
+Required by the student after F1 was closed as a known economic limitation (THREAT_MODEL T4, T6). `maxExcess` keeps its absolute meaning (DECISIONS M8-2). Every expected value comes from an independent model or a separate mathematical claim, never only from a replay of the Pool's code. Order of implementation: T1, T2, T5, T6, T7, T8, T9, T3; one commit per group.
+
+| ID | Description | Status |
+|---|---|---|
+| F1-T1 | Tier 0 later deposit with an extremely unbalanced request: (a) exactly two `transferFrom` calls, in the caller's pull order, with the step-2 targets (`vm.expectCall` with exact calldata and count 1, plus the order of the `Transfer` events); (b) `u_i < r_i/S + r_i/r_j`, checked as `u_i·S·r_j < r_i·(r_j + S)` in 512 bits (proof in the test header); (c) `maxExcess_i = u_i` passes and `u_i − 1` reverts `ExcessContributionTooHigh` with no state change; the opposite extreme request floors a target to 0 and reverts `InsufficientDepositAmount` with no `transferFrom` from the payer | `PASSED` — `test/AMMPoolF1ExtremeRequest.t.sol` (16 tests). Fixed cases: six reserve shapes (including the P3 state (1100, 909,338,911), S = 1e6 and ratios 2^100 : 1e4) × caps (1, 1e30) / (1e30, 1) × both pull orders, plus a step-2 tie at a 1e30 cap; constants from an independent integer Python model. Fuzz `testFuzz_F1T1_extremeRequest` against `test/utils/MulDiv512.sol` (no OpenZeppelin `mulDiv`): initial amounts [1e3, 2^120], one optional swap [1, 2^120], caps [1, 1e30] with two modes forcing one cap in [1, 1e3] and the other in [1e27, 1e30]; about 42% of inputs reach the success path with u > 0 (measured with a temporary copy). Uncovered: taxed tokens (re-plan) and saturated σ (Z08). Mutation (per-file backup and restore, hash identical; run against this file alone): later path ignores `token1First`, first pull uses the cap, step-2 division by the wrong reserve, shares max instead of min, excess `>=`, floor instead of ceil, token1 compared with `maxExcess0`, re-plan forced in either order: all killed. Step-2 `>=` instead of `>` (C7) survived the first version and is killed by the added tie case |
+| F1-T2 | Surplus accounting under mixed function sequences, per the M6 rules for each function (ARCHITECTURE §5.2, BI-2 to BI-4) | approved, not implemented |
+| F1-T3 | Reduced on-chain swap-fee channel, 200 to 2,000 round trips, per-token P&L and gas | approved, not implemented |
+| F1-T4 | Full P5 replay | **deferred** (not deleted); re-assessed after T3. Until then the full-scale P5 result is model-only |
+| F1-T5 | Large relative loss in the reachable P3 state, Tier 0 and Tier 1, `maxExcess = u` / `u − 1` with full rollback | approved, not implemented |
+| F1-T6 | Book loss vs executable redemption vs redemption failing by integer rounding | approved, not implemented |
+| F1-T7 | `minShares` from a quote taken before the inflation → `InsufficientShares` | approved, not implemented |
+| F1-T8 | Many distinct victims vs one large victim, each with its own independent expectation | approved, not implemented |
+| F1-T9 | Honest LP before the inflation, with and without, P&L from an independent model | approved, not implemented |
+
 ## 4. Withdrawal (M4, M5, M8)
 
 | ID | Description | Milestone | Status |
