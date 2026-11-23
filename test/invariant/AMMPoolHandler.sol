@@ -354,12 +354,26 @@ contract AMMPoolHandler is Test {
         }
     }
 
+    /// @dev I8: `skim()` sends only `balance − reserve`, only to `surplusRecipient`. Besides the
+    ///      exact Pool-side and recipient-side amounts, "no other address is credited" is checked
+    ///      by supply accounting: the token's `totalSupply` falls by exactly the burned tax.
+    ///      Together with the exact Pool decrease and the exact recipient credit, this implies
+    ///      that the combined balance of all other addresses is unchanged. The balances of the
+    ///      caller of `skim()` (this handler) and of each actor are also checked individually.
     function skim() external {
         State memory a = _state();
         uint256 s0 = a.pool0 - a.r0;
         uint256 s1 = a.pool1 - a.r1;
         uint256 w0 = t0.balanceOf(surplusRecipient);
         uint256 w1 = t1.balanceOf(surplusRecipient);
+        uint256[2] memory ts = [t0.totalSupply(), t1.totalSupply()];
+        uint256[8] memory ab;
+        for (uint256 i; i < 3; ++i) {
+            ab[i] = t0.balanceOf(actors[i]);
+            ab[i + 3] = t1.balanceOf(actors[i]);
+        }
+        ab[6] = t0.balanceOf(address(this));
+        ab[7] = t1.balanceOf(address(this));
         try pool.skim() {
             State memory b = _state();
             assertEq(b.r0, a.r0, "I9 skim: reserve0 unchanged");
@@ -368,6 +382,14 @@ contract AMMPoolHandler is Test {
             assertEq(a.pool1 - b.pool1, s1, "I7 skim: A8 token1, sends exactly the surplus");
             assertEq(t0.balanceOf(surplusRecipient) - w0, _netOf(tax0, s0), "skim: recipient credit token0");
             assertEq(t1.balanceOf(surplusRecipient) - w1, _netOf(tax1, s1), "skim: recipient credit token1");
+            assertEq(ts[0] - t0.totalSupply(), s0 - _netOf(tax0, s0), "I8 skim: token0 others unchanged");
+            assertEq(ts[1] - t1.totalSupply(), s1 - _netOf(tax1, s1), "I8 skim: token1 others unchanged");
+            for (uint256 i; i < 3; ++i) {
+                assertEq(t0.balanceOf(actors[i]), ab[i], "I8 skim: actor token0 unchanged");
+                assertEq(t1.balanceOf(actors[i]), ab[i + 3], "I8 skim: actor token1 unchanged");
+            }
+            assertEq(t0.balanceOf(address(this)), ab[6], "I8 skim: caller token0 unchanged");
+            assertEq(t1.balanceOf(address(this)), ab[7], "I8 skim: caller token1 unchanged");
             ghostSurplus0 = 0;
             ghostSurplus1 = 0;
             _count(4, true);
