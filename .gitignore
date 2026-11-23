@@ -1,3 +1,9 @@
 # Foundry build artefacts
 cache/
 out/
+
+# Coursework brief (provided by the course, not part of the code base)
+Coursework.docx
+
+# Generated report PDF (built from docs/REPORT.md)
+/REPORT.pdf
