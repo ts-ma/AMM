@@ -498,7 +498,7 @@ If any setting changes, earlier measurements are not comparable with later ones;
 | G03 | Cost of the M6 deficit entry check; M6-3 snapshot-reuse variant B vs. A | Input to the B decision (DECISIONS M6-3) | M6 | Measured 2026-11-19 (§14.3); B not adopted (DECISIONS M6-8) |
 | G04 | `createPair` gas (one measurement, configuration recorded) | Report only; no optimisation (DECISIONS M7-7) | M7 | Measured 2026-11-20 (§14.4) |
 | G05 | M8 `addLiquidity` paths vs. the G03 baseline; balance-reading reuse variants VA / VB / VC | Input to the optimisation decision and to R7 (DECISIONS M8-9) | M8 | Measured 2026-11-22 (§14.5); current implementation kept, VA / VB / VC recorded as evaluated candidates (2026-11-23); R7 event variants measured, option A chosen (M8-9) |
-| G02 | Gas snapshot of all public functions | Report and later optimisation baseline | M10 | `NOT IMPLEMENTED` |
+| G02 | Gas snapshot of all public functions | Report and later optimisation baseline | M10 | Measured 2026-11-23 (§14.6), harness `test/gas/GasG02.t.sol` |
 
 ### 14.1 M4 hardening measurements (2026-11-19)
 
@@ -661,6 +661,38 @@ Worked example used for E2, on the real Pool:
 
 Decision: option A (DECISIONS M8-9). These are single-scenario measurements, not a full gas snapshot (G02, M10).
 
+### 14.6 G02 — gas of every public function on the final code (2026-11-23, branch `m10-verification`)
+
+Configuration verified with `forge config` immediately before measuring: `solc` 0.8.38, optimizer on, 200 runs, `evm_version = osaka`, `via_ir = false`, `isolate = true`, OpenZeppelin v5.7.0, forge 1.9.0. `src/` is identical to `550bc80` (the M8 acceptance). Harness: `test/gas/GasG02.t.sol` (committed for reproducibility; logs values, asserts nothing about gas); command `forge test --match-contract GasG02 -vv`. Two consecutive runs gave identical values.
+
+**Method.** One external call per test, `gasleft()` immediately before and after it. All arguments and contract references (params struct, token, Pool and account addresses held in test storage) are copied to locals before the first reading, so no test-contract `SLOAD` is inside the interval; the ABI encoding of the call is inside, the 21,000 intrinsic cost and calldata cost are not. Each measured call is a top-level call under `isolate = true`, so the state it touches is cold. Tier 0 `MockERC20` (18 decimals); Pool seeded by alice with (1000e18, 2000e18); alice is payer and recipient with non-zero token and LP balances and approvals of `type(uint256).max`. Single scenarios, not averages.
+
+| Function | Scenario | Gas |
+|---|---|---:|
+| `addLiquidity` | initial deposit (1000e18, 2000e18) into an empty Pool | 232,004 |
+| `addLiquidity` | later, caps (1e18, 1e19), token0 cap binds, token0 first (G05 P1 conditions) | 108,814 |
+| `addLiquidity` | later, caps (1e19, 2e18), token1 cap binds, `token1First` | 109,052 |
+| `removeLiquidity` | 1e18 shares, recipient = caller | 94,105 |
+| `removeLiquidity` | all of alice's shares (LP balance → 0) | 94,144 |
+| `swapExactInput` | 1e18 token0 in | 82,539 |
+| `swapExactInput` | 1e18 token1 in | 82,587 |
+| `getAmountOut` | 1e18 token0 in (view) | 8,474 |
+| `getReserves` | view | 7,376 |
+| `sync` | no deficit (no-op) | 40,067 |
+| `sync` | token0 deficit of 1e18 (`MockDeficitERC20`) | 44,774 |
+| `skim` | surplus of 1e18 in both tokens | 101,777 |
+| `skim` | no surplus (no-op) | 39,905 |
+| LP `transfer` | 1e18 to an account with LP balance 0 | 54,879 |
+| LP `approve` | 0 → 1e18 | 49,430 |
+| LP `transferFrom` | allowance `type(uint256).max` (not decreased), recipient balance non-zero | 57,659 |
+| `AMMFactory.createPair` | new pair of two deployed tokens | 2,316,864 |
+| deployment | `new AMMPool(token0, token1, recipient)` | 2,422,397 |
+| deployment | `new AMMFactory(recipient)` | 2,838,448 |
+| calibration | `MockERC20.balanceOf` (top-level call) | 5,479 |
+
+Sizes (`forge build --sizes`): `AMMPool` runtime 10,553 B / initcode 11,709 B; `AMMFactory` 12,770 B / 12,968 B (the Factory embeds the Pool's initcode).
+
+**Comparability.** The archived G05 harness (`GasM8`), run unchanged on a `git archive` copy of the final code, reproduces its own values exactly (P1 108,789, P5 231,979, deployment 2,426,562). The G02 values differ from those by harness effects only: G05 read token addresses from test storage inside the interval for the deployment (+4,165) and passed the Pool as a parameter for deposits (−25 relative to G02's local). G02 values are therefore not to be subtracted from G05 values; comparisons use one harness.
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
 Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
