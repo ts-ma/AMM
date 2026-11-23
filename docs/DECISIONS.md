@@ -167,7 +167,7 @@ In dependency order.
 
 | Item | Needed by | Status |
 |---|---|---|
-| Function signatures, event names/fields, custom-error names | Start of each milestone (M2 §9, M3 §10, M4 §11, M5 §12, M6 §13, M7 §14 approved) | `PROPOSED` for M8 onward |
+| Function signatures, event names/fields, custom-error names | Start of each milestone (M2 §9, M3 §10, M4 §11, M5 §12, M6 §13, M7 §14, M8 §15 approved: M8-8 ABI, M8-9 event, M8-10 errors) | `PROPOSED` for M9 onward |
 | Zero-reserve recovery: when `totalSupply > 0` and either recorded reserve becomes 0 after `sync()`, define how later deposits and proportional withdrawals behave, including whether the remaining assets can still be redeemed (DECISIONS M4-6) | Start of M6 | Resolved (M6-1: terminal pool, option A) |
 | Terminal-pool recovery as a possible extension: restoring trading in a terminal pool, and the reserves backing the permanently locked 1,000 LP, which stay unredeemable (M6-1 known limitations) | To be discussed with D14 | Extension candidate; `PENDING` (D14) |
 | LP token `name` / `symbol` | M3 | Resolved (M3-1) |
@@ -290,7 +290,7 @@ M6 accepted 2026-11-19 (tag `m6-sync-skim-accepted`, merged to `main`).
 
 M7 accepted 2026-11-20 (tag `m7-factory-accepted` on `26ac725`, merged to `main`); the extra `test` commit `a70c42a` was accepted as part of M7-8.
 
-## 15. M8 decisions (in progress, 2026-11-21)
+## 15. M8 decisions (approved 2026-11-21 to 2026-11-23; implemented and tested; awaiting M8 acceptance)
 
 M8 is repositioned from a known-tax exact-gross algorithm (L-α) to a **tax-hint-independent, measured-net deposit**. The student's goal: a general-purpose AMM for real users. Unknown, random and dynamically changing taxes, tokens without a tax getter, and extra sender-side debits are compatibility goals where economically safe; safety, correct accounting, user protection and the ability to exit take priority over transaction success. Tax hints may exist in a UI for quotation only; the Pool must not need them for correct settlement. The full revision of D2, D6, U8, U9, U10, M3-4, M4-1/M4-2, ADR-015 and ARCHITECTURE / TEST_MATRIX follows in the M8 decisions commit, now that the ABI (M8-8, M8-13) is approved.
 

@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-23
 
-**Status:** Target architecture, partly implemented (M2–M7 accepted; M8 implemented on branch `m8-measured-deposit`, WIP until accepted). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
+**Status:** Target architecture, partly implemented (M2–M7 accepted; M8 implemented and tested on branch `m8-measured-deposit`, awaiting the student's acceptance). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
 Status labels are defined in [DECISIONS.md](DECISIONS.md) §0; DECISIONS.md is authoritative for status. Anything `PROPOSED` or `PENDING` needs student approval before implementation.
 
@@ -87,9 +87,9 @@ Uniswap V2's unconditional `reserve := balance` is not used: it would silently a
 
 | Function | Entry condition | Measurement | Reserve change | Surplus | FOT effect |
 |---|---|---|---|---|---|
-| `addLiquidity` | No deficit in either token | Per token: Pool balance before → `safeTransferFrom` → after; `net_i` = difference | `reserve_i += net_i` | Unchanged | Inbound tax already excluded from `net_i`; shares use `net_i` only |
-| `removeLiquidity` | No deficit | `amount_i = mulDiv(shares, reserve_i, S)`; recipient balance before/after | `reserve_i −= amount_i` | Unchanged | Recipient may receive less than `amount_i`; MIN-NET applies |
-| `swapExactInput` | No deficit | Inbound as in add, giving `a`; quote uses reserves only; recipient balance before/after | `reserveIn += a` (fee included); `reserveOut −= out` | Unchanged | `a` is net; MIN-NET applies to output |
+| `addLiquidity` | No deficit in either token | Per token: Pool balance before → `safeTransferFrom` → after; `net_i` = difference | `reserve_i += net_i` | Never decreased (BI-2′): surplus present before the call is unchanged; an arrival inside the token's own transfer window is part of `net_i`, one outside it stays surplus; an in-call removal reverts `InCallBalanceLoss` | Inbound tax already excluded from `net_i`; shares use `net_i` only |
+| `removeLiquidity` | No deficit | `amount_i = mulDiv(shares, reserve_i, S)`; recipient balance before/after | `reserve_i −= amount_i` | Unchanged by the call's own transfers (A8); a foreign in-call change is not checked (THREAT_MODEL T30) | Recipient may receive less than `amount_i`; MIN-NET applies |
+| `swapExactInput` | No deficit | Inbound as in add, giving `a`; quote uses reserves only; recipient balance before/after | `reserveIn += a` (fee included); `reserveOut −= out` | Unchanged by the call's own transfers (A8); a foreign in-call change is not checked (THREAT_MODEL T30) | `a` is net; MIN-NET applies to output |
 | `sync` | None | Read both balances | Per token: if `balance_i < reserve_i` then `reserve_i := balance_i`, else unchanged | Never absorbed (Gate R=(b)) | No transfer |
 | `skim` | None (A2: per-token independent) | Read both balances | Unchanged | Per token with `balance_i > reserve_i`: send the difference to `surplusRecipient` | Recipient may receive less; Pool accounting unaffected |
 
@@ -118,7 +118,7 @@ Uniswap V2's unconditional `reserve := balance` is not used: it would silently a
 |---|---|---|---|
 | BI-1 | After every successful call, `balance_i ≥ reserve_i` for both tokens (supported tokens). | Construction of §5.2 + BI-2/BI-5 | I2 |
 | BI-2 | (Restated 2026-11-21; original wording and reason in DECISIONS ADR-025.) `addLiquidity`, `removeLiquidity` and `swapExactInput` change each reserve only by the measured Pool-side change of their **own** transfers, each measured from a fresh snapshot (M6-8); surplus present before the call is never credited to the caller, and a transfer made by someone else during the call stays surplus (B08). **Not claimed:** that surplus is unchanged by foreign in-call transfers. | Construction of §5.2 (M5/M6) | B01–B03, B08 |
-| BI-2′ | **`addLiquidity` only, initial and later deposit (M8, implemented in commit 4, WIP until M8 acceptance):** under truthful asset measurement, a successful deposit credits to reserves only its own measured arrival `n_i`; `surplus_end ≥ surplus_start` for both tokens; any other arrival stays surplus. Option X1 only (`reserve_i += n_i`). Not a property of `swapExactInput` / `removeLiquidity` (THREAT_MODEL T30) and not a guarantee about ERC-20 tokens in general. | On-chain: `B^end − B^start ≥ n_i`, else `InCallBalanceLoss()` (DECISIONS M8-11) | M8 tests (TEST_MATRIX §3.2) |
+| BI-2′ | **`addLiquidity` only, initial and later deposit (M8, implemented in commit 4; awaiting M8 acceptance):** under truthful asset measurement, a successful deposit credits to reserves only its own measured arrival `n_i`; `surplus_end ≥ surplus_start` for both tokens; any other arrival stays surplus. Option X1 only (`reserve_i += n_i`). Not a property of `swapExactInput` / `removeLiquidity` (THREAT_MODEL T30) and not a guarantee about ERC-20 tokens in general. | On-chain: `B^end − B^start ≥ n_i`, else `InCallBalanceLoss()` (DECISIONS M8-11) | M8 tests (TEST_MATRIX §3.2) |
 | BI-3 | `skim()` leaves reserves unchanged and, for every token that had surplus, leaves `balance_i == reserve_i`. | §7.8 | B04, R03 |
 | BI-4 | `sync()` never increases a reserve; afterwards `reserve_i = min(old reserve_i, balance_i)`; balances unchanged. | §7.7 | B05, R05 |
 | BI-5 | Every Pool outbound transfer of `x` lowers the Pool's own balance by exactly `x`; otherwise the call reverts. | On-chain check (A8) | B06, X04 |
@@ -151,7 +151,7 @@ r0 = net0; r1 = net1
 - Tax hints are ignored because there is no ratio to hit; measured `net_i` is sufficient.
 - OZ v5 `_mint(address(0), …)` reverts, which is why the lock is held by the Pool instead (A5).
 
-### 6.2 Later deposits — L-α (`APPROVED`, U9 / A7)
+### 6.2 Later deposits — L-α (historical: approved as U9 / A7, retired in M8 by DECISIONS M8-1 and not implemented; the implemented later deposit is §7.2)
 
 **Inputs:** `amount0Max`, `amount1Max` (gross caps), `tax0Bps`, `tax1Bps` (untrusted hints; 0 for Tier 0), `minShares`.
 
@@ -183,7 +183,7 @@ cap = (100, 297); n1 = 200 ≤ 297 → T = (100, 200); g1 = ceil(200 × 10000 / 
 
 A bounded exhaustive check of this formula (all `T ≤ 300`, all `0 ≤ t < 10000`, Python, run outside the repository on 2026-11-17) found no counterexample. This checks the formula only, not the future Solidity code; Z05 must test the implementation.
 
-**Open comparison — step 3 gross rule (`PENDING`, start of M8).** The student asked for a dedicated comparison before implementing this step:
+**Former open comparison — step 3 gross rule (resolved as moot: L-α retired, DECISIONS M8-1 and §6 table).** The student asked for a dedicated comparison before implementing this step:
 
 | | Current: ceiling gross | Alternative: minimal necessary gross |
 |---|---|---|
@@ -307,7 +307,7 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 
 ### 7.2 `addLiquidity(IAMMPool.AddLiquidityParams calldata p) → (net0, net1, shares)`
 
-Measured-net deposit, P1+ with X1 (DECISIONS M8-1 to M8-13; implemented in M8 commits 2–4; M8 is WIP until accepted). Fields and selector: DECISIONS M8-8. `S` = LP `totalSupply()`, `r_i` = recorded reserves, `n_i` = measured net.
+Measured-net deposit, P1+ with X1 (DECISIONS M8-1 to M8-13; implemented in M8 commits 2–4, tested in commits 5a–5f and the F1 follow-up tests (TEST_MATRIX §3.4); awaiting acceptance). Fields and selector: DECISIONS M8-8. `S` = LP `totalSupply()`, `r_i` = recorded reserves, `n_i` = measured net.
 
 1. `nonReentrant`.
 2. **Checks, in this order, before any transfer.**

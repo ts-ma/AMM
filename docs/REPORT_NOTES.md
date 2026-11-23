@@ -98,7 +98,7 @@ The unmatched amount is not the user's loss one-to-one. Under X1 the depositor o
 | T4 layer "no donation into reserves" | weakened, bounded by `maxExcess` | intact | changed | as the Pool |
 | New attack surface | JIT capture of excess | refund callbacks, A8 on refund | MEV on deposits, rounding | allowances, stranded funds |
 | Implementation and test burden | medium | medium-high | very high | high (second contract) |
-| Gas | **not measured** (G05) | not measured | not measured | not measured |
+| Gas | measured in G05 (TEST_MATRIX §14.5): +10,264 gas (+10.4 %) on the G03-comparable later-deposit path | not measured | not measured | not measured |
 
 ### 1.6 Bounding the unmatched contribution: absolute amount vs. percentage of the receipt
 
