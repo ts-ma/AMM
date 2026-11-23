@@ -125,3 +125,20 @@ The wanted ratio is 1/1,000,000 = 0.01 bps, which is not an integer bps value. T
 **Decimals.** One unit is the token's smallest unit. With 6 decimals, 1,000,000 units are 1 whole token and 1 unit is 0.000001 tokens. With 18 decimals, 1,000,000 units are only 10^−12 tokens. A UI must therefore convert a human-readable tolerance into units using the token's decimals; the Pool itself does not read decimals.
 
 **Use in the reports.** The M8 milestone report cites this decision briefly. The M11 final report uses the example above in its design trade-offs section.
+
+---
+
+## 2. M10 — What `minShares` does and does not bound under swap-only state changes
+
+**Retracted (2026-11-23, M10 review):** the review's first-batch statements "after any front-running swap σ′ ≤ σ_quote" and "`minShares` is sufficient against a sandwich" are withdrawn. Three reasons:
+- The equality step `S·√(A·B/k) = σ_quote` holds only for caps exactly at the ratio (`A·r1 = B·r0`). With loose caps a swap can raise σ′ above σ_quote. Example (integer model): r = (1e6, 1e6), S = 1e6, caps (1e4, 1e5): σ_quote = 10,000; after a swap of 1e5 token1 in, σ′ = 10,996 while the depositor pays 12,096 instead of 10,000 token1. `minShares = σ_quote` does not revert; there the binding protections are the other token's cap and `maxDebit`.
+- Rounding: σ_quote is floored after the step-2 floor, so it can lie below `⌊S·√(A·B/k_q)⌋`.
+- Sampling: the first model drew nearly-proportional caps, large reserves and large swaps, so it did not sample the rounding edge, and it modelled only swaps between quote and execution. Share count was also conflated with value.
+
+**Kept statements, each with its scope:**
+1. **[proven] + executed (Z10):** with only swaps between the quote and the deposit, for any caps `A`, `B` and Tier 0 tokens (`n_i ≤ cap_i`): `σ′²·k_q ≤ S²·A·B`. Proof and local evidence: TEST_MATRIX Z10.
+2. **[proven], model only:** if the caps are *strictly* proportional at the quote, `A·r1 = B·r0` (cross products equal), then σ′ ≤ σ_quote. Proof: step 2 at the quote gives `T = (A, B)` exactly, so `σ_quote = ⌊S·A/r0⌋ = ⌊S·√(A·B/k_q)⌋`, and statement 1 gives `σ′ ≤ ⌊S·√(A·B/k_q)⌋`. Model check: 200,000 targeted strictly-proportional samples, 0 cases with σ′ > σ_quote. Not executed on the Pool.
+3. **Model observation:** with caps that are only approximately proportional after flooring, `B = ⌊A·r1/r0⌋`, σ′ = σ_quote + 1 occurred in 1,069 of 288,702 model samples with small swaps; **none of these 1,069 had equal cross products**. The example previously labelled "proportional" is not: r = (19,952, 5,314), A = 882, B = 234 gives `A·r1 = 4,686,948 ≠ B·r0 = 4,668,768`.
+4. **Not claimed:** any protection of value; any statement when deposits, withdrawals or `sync()` happen between the quote and the deposit; protection against a quote taken after a per-share inflation (F1-T7).
+
+**Use in the reports.** The M10 milestone report states 1–4 in this form; the M11 report may use statement 1 as the share-count bound and must keep the scope sentence.
