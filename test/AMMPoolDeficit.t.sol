@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.38;
 
+import {Vm} from "forge-std/Vm.sol";
 import {AMMPool} from "../src/AMMPool.sol";
 import {AMMMath} from "../src/libraries/AMMMath.sol";
 import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
@@ -109,6 +110,55 @@ contract AMMPoolDeficitTest is PoolStateFixture {
         (uint256 o0, uint256 o1) = pool.removeLiquidity(1000, 0, 0, carol, block.timestamp);
         assertGt(o0, 0);
         assertGt(o1, 0);
+    }
+
+    /// R24 (M11): a direct top-up during a deficit refills the reserve's backing without `sync()`.
+    ///      Partial top-up: still in deficit, so add, remove and both swaps keep reverting
+    ///      `ReserveDeficit` with no state change. Exact top-up (balance == reserve): the same
+    ///      calls succeed. The reserves are never changed by the top-ups and no `ReserveSynced`
+    ///      is emitted. Exact-top-up coverage also exists in
+    ///      `test_R08_boundaryEqualPassesMinusOneReverts` (deficit 1) and
+    ///      `AMMPoolF1SurplusAccounting.test_F1T2_slashAboveSurplus_deficitAndBothRecoveries`
+    ///      (path B); this test adds the partial step and a larger deficit.
+    function test_R24_partialTopUpStillBlocksExactTopUpRestores() public {
+        (uint256 r0, uint256 r1) = _reserves();
+        _slashPool(t0, 1000);
+        _assertAllRevert();
+
+        _donate(t0, 999); // partial: deficit 1 remains
+        assertEq(t0.balanceOf(address(pool)) + 1, r0, "still one unit short");
+        _assertAllRevert();
+
+        vm.recordLogs();
+        _donate(t0, 1); // exact: balance == reserve
+        (uint256 e0, uint256 e1) = _reserves();
+        assertEq(e0, r0, "top-up does not change reserve0");
+        assertEq(e1, r1, "top-up does not change reserve1");
+        assertEq(t0.balanceOf(address(pool)), r0);
+        pool.sync(); // no deficit any more: no event
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != AMMPool.ReserveSynced.selector, "no ReserveSynced");
+        }
+
+        uint256 expected = AMMMath.getAmountOut(10_000, r0, r1);
+        vm.prank(bob);
+        assertEq(pool.swapExactInput(address(t0), 10_000, 0, carol, block.timestamp), expected, "priced from r");
+        vm.prank(alice);
+        pool.addLiquidity(addParams(1000, 1_000_000, 0, alice, block.timestamp));
+        vm.prank(alice);
+        pool.removeLiquidity(1000, 0, 0, carol, block.timestamp);
+    }
+
+    /// R24: with both tokens in deficit, fully refilling only one still blocks everything.
+    function test_R24_bothDeficitsOneRefilledStillBlocks() public {
+        _slashPool(t0, 500);
+        _slashPool(t1, 700);
+        _donate(t0, 500);
+        _assertAllRevert();
+        _donate(t1, 700);
+        vm.prank(bob);
+        pool.swapExactInput(address(t1), 10_000, 0, carol, block.timestamp);
     }
 
     // ------------------------------------------------------------------
