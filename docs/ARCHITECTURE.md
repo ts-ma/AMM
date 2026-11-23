@@ -524,7 +524,7 @@ Contract `AMMFactory` in `src/AMMFactory.sol` (DECISIONS M7-4).
 
 No public one-time `initialize()`; use the parameterised constructor.
 
-## 9. Events (`PROPOSED`)
+## 9. Events (all six `APPROVED`: M3-4, M4-3, M5-3, M6-4, M7-4)
 
 Typed events for: pair creation, liquidity added, liquidity removed, swap, deficit reconciled (`sync`), surplus sent (`skim`). Fields are fixed per milestone.
 
