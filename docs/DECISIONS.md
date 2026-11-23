@@ -352,3 +352,9 @@ M8 is repositioned from a known-tax exact-gross algorithm (L-α) to a **tax-hint
 | M10-7 | A8 and Gate R kept, with their applicable boundaries disclosed (THREAT_MODEL §7.2, §7.3; REPORT_NOTES §3); the positional token fields of add / remove are registered for a later ABI re-review (§8) | `APPROVED` |
 | M10-8 | Foundry Counter template (`src/`, `test/`, `script/`) removed; README deploy example replaced | `APPROVED`, done in `a585188` |
 | M10-9 | No Uniswap V2 gas comparison with imported V2 code (it would need external code compiled with solc 0.5.16); the report compares qualitatively | `APPROVED` |
+
+## 17. M11 decisions (student, 2026-11-23)
+
+| ID | Decision | Status |
+|---|---|---|
+| M11-1 | Gas review candidates A (skip the payer snapshot when `maxDebit_i = type(uint256).max`) and B (ERC-1167 clones of one Pool implementation) are measured in isolation (branch `m11-gas-exp`; TEST_MATRIX §14.7) and **not adopted**. M8-3 (payer snapshot of both tokens) and the `AddLiquidityParams` interface with 10 fields are kept; VU stays not adopted (M10-4). Simpler parameter choices for ordinary users are left to future callers (wallet, router); the Pool has no defaults | `APPROVED` |
