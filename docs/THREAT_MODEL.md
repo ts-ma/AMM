@@ -138,7 +138,9 @@ No owner exists. This does not remove risk around the economically privileged `s
 2. Refunds of mistaken transfers depend on off-chain trust in `surplusRecipient`.
 3. Immutable parameters cannot be corrected; the four `surplusRecipient` checks catch only four obvious mistakes.
 4. Tier 1 covers only the U8 model; other taxed tokens may revert or behave outside the guarantees.
-5. Adaptive deposits leave small rounding dust that benefits all LPs; it is not zero.
+5. Later deposits leave an unmatched contribution `u_i` in the reserves (M8-2, X1); it benefits all LP shares pro rata (the depositor's new shares and the lock included) and is not zero. Its size depends on the token (M10 scope revision):
+   - Tier 0: rounding only, `u_i < r_i/S + r_i/r_j` at execution ([proven], F1-T1);
+   - taxed tokens: of the order of the tax on the deposit, depending on the pull order (REPORT_NOTES §1.5: a 5 % tax on token1 pulled second leaves 500 of 10,000 token0 unmatched, 5 %); bounded only by the depositor's `maxExcess_i`.
 6. No MEV protection, no oracle, no pause. Deadlines use `block.timestamp`, which a block producer can shift by a few seconds (`forge lint` `block-timestamp`); a deadline bounds staleness, not exact timing.
 7. Arithmetic ranges are hand-derived sufficient conditions; inputs beyond them may make legitimate calls revert.
 8. A failing transfer of one token blocks `skim()` for both tokens.
@@ -180,7 +182,7 @@ Categories: **1** supported; **2** conditionally supported, may revert; **3** un
 | Extra sender-side charge on inbound only (Pool-outbound exact) | conditional: payer's net debit `≤ maxDebit` | ✓ | 2 |
 | Extra charge on Pool-outbound (exclusive FOT) | ✓ — **deposits succeed** | every outbound transfer reverts (A8) | 3 + 4 |
 | Direction- or address-dependent, owner-settable, upgradeable, pausable or blacklisting tokens | measured | may switch to the row above at any time | 4 |
-| Rebasing or reflection | rebase down → deficit (T9); rebase up or reflection → surplus, which goes to `skim()` | as inbound | 3 |
+| Rebasing or reflection | rebase down → deficit (T9); rebase up or reflection → surplus, which goes to `skim()` and so to `surplusRecipient`, **not to the LPs** (M10 disclosure; Gate R kept). This also applies to yield that accrues to the holder's balance | as inbound | 3 |
 | Untruthful `balanceOf`, or `balanceOf` reverting | measurements meaningless | every function can revert | 3 + 4 |
 
 ### 7.3 What triggers A8
@@ -189,6 +191,8 @@ A8 reverts a Pool outbound transfer of `x` (in `removeLiquidity`, swap output, `
 - (a) the token charges the Pool extra (exclusive FOT);
 - (b) the Pool is debited less than `x` while the call reports success;
 - (c) the Pool's balance of that token changes for another reason during the transfer (a rebase, reflection, or a callback moving the Pool's balance).
+
+**Applicable boundary of (b) (M10 disclosure; A8 kept, student 2026-11-23).** A8 is an equality: a token whose transfer changes the sender's balance by an amount that differs from `x` by rounding (share-based balance accounting; Lido documents a 1–2 wei corner case for stETH, not tested here) traps the Pool. Its deposits and swap inputs succeed, but each outbound transfer reverts whenever the difference occurs, so withdrawals of such a pool can fail. A one-sided check (rejecting only an over-debit) would admit these tokens, but it would also accept a token that reports success while moving less than `x` out of the Pool: the reserve would still fall by `x`, the undelivered part would stay in the Pool as surplus (to `surplusRecipient` through `skim()`), and with `min = 0` a withdrawing LP would burn shares for less than their claim. Such tokens are unsupported (rebasing, category 3); A8 stays.
 
 A8 is **not** triggered by an inclusive tax (the recipient side is MIN-NET's job), or by a token transfer that reverts (that revert simply propagates). Deposits contain no outbound transfer in the M8 design, so they never trigger A8.
 

@@ -98,6 +98,8 @@ Uniswap V2's unconditional `reserve := balance` is not used: it would silently a
 - Under Tier 0 / Tier 1 assumptions a deficit should not arise; one indicates a token outside the supported model.
 - `addLiquidity`, `removeLiquidity` and `swapExactInput` revert at entry if **either** token is in deficit.
 - `sync()` lowers the affected reserve to the balance and emits an event. The loss is borne by all LPs pro rata. With no deficit, `sync()` returns without change (U5).
+  - **M10 scope note (wording only).** "Pro rata" describes the booked loss at `sync()`: each share's claim on that token falls by `d/S`. It does not include what follows: `sync()` moves the price, and price-restoring arbitrage then takes a second-order amount from all LPs (derivation only, not tested; fees ignored; premise: before the deficit the pool was at the external price `P = y/x`, with reserves `(x, y)`, and token0 loses `d`). After `sync()` the booked value at price `P` is `P·(x − d) + y = P·(2x − d)`; after arbitrage back to `P` the reserves satisfy `x'·y' = (x − d)·y`, worth `2P·√(x(x − d))`. By AM-GM `2√(x(x − d)) ≤ 2x − d`, so the LPs lose a further `P·(2x − d − 2√(x(x − d))) ≈ P·d²/(4x)` beyond the booked `P·d`.
+  - A deficit of **any size**, even 1 unit, blocks add, remove and swap until someone calls `sync()`, or until a direct transfer raises the balance back to the reserve. A small deficit gives no arbitrageur a reason to pay for `sync()`, so an integrator (UI) should detect `balance < reserve` and call `sync()` itself (DECISIONS §8, deficit recovery item).
 - `skim()` is not blocked by a deficit: it handles each token independently (A2). Example: token1 in deficit and token0 with surplus → `skim()` sends token0's surplus and skips token1.
 - Entry check placement and error `ReserveDeficit()`: DECISIONS M6-2.
 
@@ -108,6 +110,7 @@ Uniswap V2's unconditional `reserve := balance` is not used: it would silently a
 - On-chain, a mistaken transfer and an intentional one look identical; the documents do not call surplus a "donation".
 - Only destination: `skim()` → `surplusRecipient`. Anyone may call it; the caller cannot choose the recipient. With no surplus it returns without change (U5).
 - LP redemption uses recorded reserves; surplus never takes part.
+- Scope (M10 note, DECISIONS §3): this concerns surplus that has formed (`balance > reserve`). A transfer while the token is in deficit refills the reserve's backing up to the reserve; a depositor's unmatched contribution `u_i` is not surplus and enters the reserves (§7.2, X1). An unsupported positive-rebase or yield token's growth becomes surplus and goes to `surplusRecipient`, not to the LPs (disclosed; Gate R kept).
 - Refunds to mistaken senders are voluntary off-chain actions by the controller of `surplusRecipient`; the contract cannot enforce them.
 
 ### 5.5 Balance invariants (`APPROVED`, A1)
@@ -381,6 +384,10 @@ Measured-net deposit, P1+ with X1 (DECISIONS M8-1 to M8-13; implemented in M8 co
     - The bound depends on the state at **execution**. A UI that computes `M_i` from a quote must allow for state changes in between (or accept that the deposit may revert); a too-small value never changes what is minted, it only makes the call revert.
     - Not valid for taxed or otherwise non-exact tokens: there the unmatched amount is dominated by the tax and the pull order (REPORT_NOTES §1.5), and `maxExcess` is the user's own tolerance.
     - Tests: L44 (TEST_MATRIX §3.2).
+  - **What a successful `minShares` implies about the reserves (M10, 2026-11-23; necessary condition only, no rule change).** Tier 0, and only swaps between the quote and the deposit (so `S` is unchanged and `r0'·r1' ≥ k_q = r0·r1`, §6.5); `A`, `B` = the request caps, `m = minShares > 0`, `r'` = reserves at execution.
+    - [proven] `σ' ≤ n_i·S/r_i' ≤ cap_i·S/r_i'`, so a deposit that mints `σ' ≥ m` requires `r0' ≤ S·A/m` and `r1' ≤ S·B/m`; with `r0'·r1' ≥ k_q` this gives the **necessary** interval `r0' ∈ [k_q·m/(S·B), S·A/m]` (and symmetrically `r1' ∈ [k_q·m/(S·A), S·B/m]`). The interval is empty when `m > S·√(A·B/k_q)`, consistent with Z10.
+    - It is **not sufficient**: reserves inside the interval do not guarantee that the deposit succeeds, and it is **not a price or value guarantee** for the depositor; loose caps make the interval wide. Model check (integer model, not the Solidity code): 59,521 deposits with `σ' ≥ m`, none outside the interval; not executed on the Pool. Outside the scope (deposits, withdrawals or `sync()` in between; taxed tokens) nothing is claimed. Related statements: REPORT_NOTES §2.
+  - **The first deposit cannot be requested as such (M10, L45).** The current interface cannot specify "initial only": the path is chosen by `totalSupply()` at execution. A caller who intends the first deposit should set `minShares` to its initial-path expectation `⌊√(A·B)⌋ − 1000`. This rejects a front-run at a clearly different ratio (tested: 1:1 and a relative skew of 3e-6), but **not every front-run**: on the later path the caller pays no lock, so a shortfall of up to the 1,000 lock shares is absorbed and a slightly different ratio passes (L45 regression: skew 2.5e-19), the caller then depositing at the front-runner's ratio. On the later path the excess fields, which have no effect on an initial deposit, become active: `maxExcess = 0` can then revert.
 
 ### 7.3 `removeLiquidity(shares, min0Net, min1Net, recipient, deadline) → (net0, net1)`
 
@@ -467,6 +474,20 @@ Evidence: these review rules plus P05/P06 and invariant I1. This is code-review-
 Review rule per milestone: every `_mint`/`_burn` call site in `src/` is listed and grep-checked. Consequence: BI-7 holds with equality and is enforced on-chain.
 
 **Tests:** P01–P06.
+
+### 7.10 Per-token parameter mapping (M10, 2026-11-23; documentation of the current ABI, no change)
+
+`token0` is the lower address and `token1` the higher: the constructor reverts `TokensNotSorted()` otherwise, and `AMMFactory.createPair` sorts. A caller must map its own token order onto these positions. Fields named with `0` / `1` are positional; only the swap functions take an address. A future ABI review of this asymmetry is registered in DECISIONS §8.
+
+| Function / event | Applies to token0 (lower address) | Applies to token1 (higher address) | Not positional |
+|---|---|---|---|
+| `addLiquidity` (params) | `amount0RequestMax`, `maxDebit0`, `maxExcess0` | `amount1RequestMax`, `maxDebit1`, `maxExcess1` | `minShares`, `recipient`, `deadline`; `token1First` changes only the pull order |
+| `addLiquidity` (returns), `LiquidityAdded` | `net0` | `net1` | `shares` (always sorted order, whatever `token1First`) |
+| `removeLiquidity` (args) | `min0Net` | `min1Net` | `shares`, `recipient`, `deadline` |
+| `removeLiquidity` (returns) / `LiquidityRemoved` | `net0` (recipient's receipt) / `amount0` (Pool-side) | `net1` / `amount1` | `shares` |
+| `swapExactInput`, `getAmountOut`, `Swap` | — | — | `tokenIn` is an address (must be `token0` or `token1`, else `InvalidTokenIn`); the output token is the other one |
+| `getReserves` | `reserve0_` | `reserve1_` | — |
+| `sync` / `skim` events | — | — | `ReserveSynced(token, …)`, `SurplusSkimmed(token, …)` carry the token address |
 
 ## 8. Factory
 

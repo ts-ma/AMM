@@ -54,7 +54,7 @@ The M8 decisions (§15) replaced parts of earlier decisions. Those earlier rows 
 | D5 | Initial mint | B | `floor(sqrt(net0 × net1))` minus a permanently locked minimum liquidity. | `APPROVED`; lock per U2 |
 | D6 | Later liquidity | B | Optimal-ratio deposit bounded by GROSS maxima; Adaptive Net Deposit for supported taxed tokens. | `APPROVED` for the optimal-ratio part; **partly superseded** (gross maxima, U9 algorithm) by M8-1 / M8-13 (§0.1) |
 | D7 | Withdrawal | A | Proportional redemption of both tokens with net minimum-received constraints. | `APPROVED` |
-| D8 | Swap fee | B (current) | Fixed swap fee, 100% retained by LPs. No protocol fee. | `APPROVED`; value per U1 |
+| D8 | Swap fee | B (current) | Fixed swap fee, 100% retained by LPs. No protocol fee. | `APPROVED`; value per U1. **M10 scope note (2026-11-23, wording only):** the whole fee stays in the reserves (no protocol fee) and is shared pro rata by all LP shares, **including the 1,000 permanently locked shares** (§7.9 of ARCHITECTURE); the lock's part is never redeemable. Negligible in a large pool, large in a small one (e.g. 50 % if the initial `⌊√(n0·n1)⌋` is 2,000) |
 | D9 | User protection | A | Slippage minima and deadlines. | `APPROVED` |
 | D10 | Administration | A (current) | Pool and Factory are ownerless: no fee setter, no emergency sweep, no configurable admin. | `APPROVED` |
 | D11 | Reentrancy | A | OpenZeppelin reentrancy guard plus call-order analysis. Implementation: `ReentrancyGuardTransient` (M3-5, revised from `ReentrancyGuard`). | `APPROVED` |
@@ -89,6 +89,10 @@ In v0.3, `sync()` could set reserves to actual balances, absorbing surplus. Unde
 - `surplusRecipient` has no privileged functions but is an economic beneficiary. Ownerless does not mean "no beneficiary".
 - Surplus stays in the Pool until someone pays gas to call `skim()`.
 - LPs never benefit from unsolicited transfers.
+  - **M10 scope note (2026-11-23, wording only; Gate R unchanged).** The sentence holds for **surplus that has already formed** (`balance > reserve`): it never enters the reserves and leaves only through `skim()`. Two cases are outside it:
+    - A direct transfer **while the token is in deficit** (`balance < reserve`) first refills the backing of the recorded reserve: up to the deficit it creates no surplus, and it spares the LPs the loss that `sync()` would book (it lifts the `ReserveDeficit` block once `balance ≥ reserve`, by the entry check's definition; derived from the code, not tested). Only the part above the reserve is surplus.
+    - A depositor's **unmatched contribution** `u_i` inside `addLiquidity` (M8-2, X1) is not an unsolicited transfer: it enters the reserves, benefits all LP shares pro rata (the depositor's new shares included) and can move the price. It is bounded by the depositor's `maxExcess_i`.
+  - **M10 disclosure (Gate R kept, student 2026-11-23).** For an unsupported positive-rebase or yield-bearing token, the growth of the Pool's balance is surplus and goes to `surplusRecipient` through `skim()`, not to the LPs.
 
 ### Rejected alternatives
 
@@ -99,7 +103,7 @@ In v0.3, `sync()` could set reserves to actual balances, absorbing surplus. Unde
 
 | ID | Topic | Decision | Status |
 |---|---|---|---|
-| U1 | Swap fee | 30 bps, denominator 10,000, output rounded down, 100% to LPs. | `APPROVED` |
+| U1 | Swap fee | 30 bps, denominator 10,000, output rounded down, 100% to LPs. | `APPROVED`. M10 scope note: "to LPs" means to the reserves, shared by all LP shares including the permanent lock (see D8) |
 | U2 | Minimum liquidity lock | Amount: 1,000 smallest LP units. Destination: **the Pool's own address** (`_mint(address(this), 1000)`), with the code-path restrictions in ARCHITECTURE §7.9. | `APPROVED` (amount 2026-11-17; destination A5, 2026-11-17) |
 | U3 | `surplusRecipient` | Immutable constructor argument. Constructor rejects four values: `address(0)`, `token0`, `token1`, `address(this)`. These checks catch only these four obvious mistakes; they cannot detect a wrong-but-valid address, a lost key, or an address the token refuses to pay. Tests use mock addresses; the real address is chosen at deployment. | `APPROVED` (A3) |
 | U4 | Deficit handling | If either token has `balance < reserve`, `addLiquidity`, `removeLiquidity` and `swapExactInput` revert. `sync()` lowers the affected reserve to the balance. `skim()` treats each token independently (A2): it sends any token's surplus and skips tokens without surplus, whether or not the other token is in deficit. | `APPROVED` (revised by A2) |
@@ -160,7 +164,7 @@ Before a substantive change to any ADR, present: problem, evidence, proposed cha
 |---|---|---|---|---|
 | 001 Pool | Single CPMM first, then multi-pool Factory | Factory first; three-token Pool | Clear incremental path; Factory needs constructor/fixture changes and full regression | `APPROVED` |
 | 002 Token tiers | Tier 0 + U8 Tier 1 | Standard only; rebasing; exclusive FOT | Compatibility vs. accounting complexity | `APPROVED` |
-| 003 Reserve model | Recorded reserves; `skim()` to fixed recipient; downward-only `sync()` | v0.3 absorbing `sync()`; arbitrary recipient; admin recovery | Removes the race and the transfer-plus-sync price route; refunds rely on off-chain trust | `APPROVED` |
+| 003 Reserve model | Recorded reserves; `skim()` to fixed recipient; downward-only `sync()` | v0.3 absorbing `sync()`; arbitrary recipient; admin recovery | Removes the race and the transfer-plus-sync price route (M10 scope note: for already-formed surplus; a deposit's unmatched contribution enters the reserves and can move the price (M8-2, X1), and a transfer during a deficit refills the reserve's backing, §3); refunds rely on off-chain trust | `APPROVED` |
 | 004 LP token | Transferable ERC-20 (Pool inherits OZ `ERC20`) | Internal mapping | Composability vs. transfer/allowance surface | `APPROVED` |
 | 005 Initial LP | Floor sqrt, 1,000 locked in the Pool's own balance | No lock; `0x…dEaD` | Raises the cost of first-depositor manipulation; lock argument relies on code review plus invariant tests | `APPROVED` |
 | 006 Later LP | Optimal ratio + adaptive net path | Strict rejection; partial FOT | Better UX vs. complexity | `APPROVED`; the adaptive net path is realised by ADR-024, not ADR-015 (§0.1) |
@@ -201,6 +205,7 @@ In dependency order.
 | Deficit recovery depends on someone calling `sync()`: after a deficit, add / remove / swap stay blocked (`ReserveDeficit`) until an external account pays gas to call `sync()`. Whether a better mechanism exists is an open question (student request, 2026-11-20) | To be discussed with the optimisation items (after M8, with G02 / M10) | `PENDING` |
 | LP-share dust: keep floor-shares (Uniswap V2 style) or switch to shares-first with ceiling amounts (ERC-4626 `mint` style); touches D6/U9 steps 2 and 5 (DECISIONS M4H-4) | Start of M8 (student asked to be reminded) | Resolved at the M8 acceptance (2026-11-23): keep floor-shares (M8-14) |
 | Strict `[T, T + 1]` net check vs. relying on `minShares` only for unknown token tax (DECISIONS M4H-4) | Start of M8 (student asked to be reminded) | Resolved: the check is removed with L-α; user exposure is bounded by `maxDebit`, `maxExcess` and `minShares` (M8-1 to M8-3) |
+| ABI re-review: token addressing (M10 review ②-1, registered by the student 2026-11-23). `addLiquidity` / `removeLiquidity` address their per-token fields by sorted position (`amount0RequestMax`, `maxDebit0`, `maxExcess0`, `min0Net`, …), while `swapExactInput` takes a `tokenIn` address (M5-1, chosen so that the caller's direction cannot be reversed by sorting). A caller that swaps the two tokens' order applies its caps, debit bounds and minima to the wrong token. Current mitigation: the per-token mapping table in ARCHITECTURE §7.10 | Later ABI review (with D14 or a periphery decision); no change now | `PENDING` |
 | D14 | — | `PENDING` |
 | Protocol fee, `feeTo`, owner/pause, separate surplus accounting, `uint112` packing | — | `FUTURE-ONLY` |
 

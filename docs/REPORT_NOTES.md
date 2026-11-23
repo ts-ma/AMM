@@ -63,7 +63,7 @@ The chosen replacement (**P1+**, DECISIONS M8-1/M8-2) uses no tax hint on-chain.
 
 **Risks and costs.**
 - **Payer identity.** The Pool measures and bounds its `msg.sender`, which is the Router. The Pool's `maxDebit` then protects the Router, not the user. The Router must re-implement whole-call measurement of the *user's* debit, or users lose that protection.
-- **Extra taxed hops.** With a router, an inclusive tax is charged twice: user → Router, then Router → Pool, so the Pool receives about `(1−t)²·g`. Refunds add a third hop. Exclusive FOT charges extra on every hop. Letting the Pool pull directly from the user would need a `payer` parameter with its own authorisation scheme (Permit2-like). That is an ABI and security change: without authorisation, anyone could spend other users' allowances to the Pool.
+- **Extra taxed hops.** On the path where the Router first receives the user's tokens and the Pool then pulls them from the Router (the only path this interface allows, because the Pool always pulls from `msg.sender`), an inclusive tax is charged twice: user → Router, then Router → Pool, so the Pool receives about `(1−t)²·g`. Refunds add a third hop. Exclusive FOT charges extra on every hop. Letting the Pool pull directly from the user would need a `payer` parameter with its own authorisation scheme (Permit2-like). That is an ABI and security change: without authorisation, anyone could spend other users' allowances to the Pool.
 - **Allowance blast radius.** Users approve one Router for every pool. A Router bug can drain all of those allowances, whereas today each approval only exposes one Pool.
 - **Stranded funds.** Leftovers and dust held by the Router between or after calls need sweep or refund logic; such functions are a common periphery footgun.
 - **More surface to keep ownerless.** The Router must also be ownerless and immutable (D10), with its own ABI whitelist (an X03-style check), its own reentrancy lock (the Pool's transient lock does not cover the Router), and care with reading Pool views mid-call (T13).
@@ -142,3 +142,20 @@ The wanted ratio is 1/1,000,000 = 0.01 bps, which is not an integer bps value. T
 4. **Not claimed:** any protection of value; any statement when deposits, withdrawals or `sync()` happen between the quote and the deposit; protection against a quote taken after a per-share inflation (F1-T7).
 
 **Use in the reports.** The M10 milestone report states 1–4 in this form; the M11 report may use statement 1 as the share-count bound and must keep the scope sentence.
+
+---
+
+## 3. M10 — Consequences of correct rules (review ②, 2026-11-23)
+
+Each item is a cost or consequence of rules that work as approved. None changes a rule; the student's decision is recorded for each.
+
+| # | Consequence | Applicable boundary | Decision |
+|---|---|---|---|
+| ②-1 | Positional per-token fields in add / remove vs. the `tokenIn` address in swaps | A caller with the token order reversed applies caps, debit bounds and minima to the wrong token (it may revert or execute under the wrong bounds) | Registered as a later ABI re-review item (DECISIONS §8); mapping table in ARCHITECTURE §7.10 now |
+| ②-2 | A8 is two-sided | Traps tokens whose transfers differ from `x` by rounding (THREAT_MODEL §7.3) | A8 kept; disclosed |
+| ②-3 | Gate R sends balance growth to `surplusRecipient` | Positive rebase, reflection or holder-balance yield (unsupported tokens): not paid to LPs | Gate R kept; disclosed |
+| ②-4 | Any deficit, even 1 unit, blocks add / remove / swap until `sync()` | Small deficits give no incentive to call `sync()` | Explicit `sync()` kept (M10 decision 3); UI guidance in ARCHITECTURE §5.3 |
+| ②-5 | Deposit protection is a single `minShares` with request caps | It implies only a necessary reserve interval, not a price guarantee (ARCHITECTURE §7.2) | Documented; a per-token minimum would change the ABI and is not proposed now |
+| ②-6 | User protection lives in the Pool | Measured in G05 (TEST_MATRIX §14.5): +10,264 gas (+10.4 %) for the later deposit **P1 (token0 first, token0 cap binds) compared with the G03 baseline 98,525 of the same path at the pre-M8 code** under identical harness conditions; other paths are not comparable with G03. A Router would add a second taxed hop on the path described in §1.4 | Not re-opened; G02 reports the isolated variants |
+| ②-7 | The 1,000-share lock | Takes the lock's pro-rata part of fees and unmatched contributions permanently; large share of a small pool (DECISIONS D8 note) | Kept (as Uniswap V2); figures in the report |
+| ②-8 | Same LP `name` / `symbol` in every pool | Wallets cannot tell pools apart by name | Kept (M3-1) |
