@@ -398,6 +398,7 @@ Measured-net deposit, P1+ with X1 (DECISIONS M8-1 to M8-13; implemented in M8 co
 5. Outbound interaction, per token: snapshot Pool and recipient balances → `safeTransfer(recipient, amount_i)` → require Pool decrease `== amount_i` (A8) → `net_i` = recipient increase → require `net_i ≥ min_iNet` (MIN-NET).
 6. Emit event.
 
+- **Small positions (M10, W12).** When `r_i/S < 1` (e.g. a 2-decimal token paired with an 18-decimal one), a holder of fewer than `⌈S/r_i⌉` shares cannot redeem: the token-i amount floors to 0 while `r_i > 0`, so step 4 reverts. A partial exit can leave such a remainder. The shares keep their book claim and stay transferable; they can be exited only after acquiring more shares. Example in TEST_MATRIX W12: S = 1e12, r2 = 1e4, threshold about 1e8 shares.
 - Burns `msg.sender`'s shares; never the V2 pattern "transfer LP to the Pool, then burn the Pool's balance" (that would conflict with the lock in §7.9).
 - **Postconditions:** BI-2, BI-5, BI-6, BI-7, BI-8.
 - **Threats:** malicious recipient, taxed output, rounding, locked-share redemption.
