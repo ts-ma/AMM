@@ -33,7 +33,7 @@ Close (10 s): "A small, conservative core whose protections each say exactly wha
 | What happens with a deficit? | Add/remove/swap revert; `sync` books the loss, or an exact top-up restores the pool (R24). | 8.2, 8.3 |
 | Is the pool safe from reentrancy? | All five state-changing functions use a transient-storage guard; callbacks tested bubbling and swallowed; views are unguarded (read-only reentrancy). | 9.1 |
 | Why both `RequestMax` and `maxDebit`? | One bounds what the Pool requests, the other what the payer actually loses; `100 / 105` tolerates a 5-unit sender fee. Equal values are fine for ordinary tokens, but the debit is still measured. | 5.4 |
-| Why not clone pools to save deployment gas? | Measured: a clone saves ≈ 2M once per pair but costs ≈ +6k on every call; break-even ≈ 336 calls (estimate). Busy pools pay more. | 11.4 |
+| Why not clone pools to save deployment gas? | Measured: a clone saves ≈ 2M once per pair but costs ≈ +6k on every call; break-even ≈ 337 calls (estimate, +6,072 per call, implementation deployment not amortised). Busy pools pay more. | 11.4 |
 | Why not `uint112` like Uniswap? | Measured: saves ≈ 4,300 gas per call, costs 159k per deployment, and caps reserves at 2¹¹²; rejected to keep the full approved range. | 11.2 |
 | Biggest open problem? | Exit safety for tokens that change behaviour; inflation via excess is bounded but the supported-token path is only modelled. | 12 |
 | How do you know the maths is right? | Independent integer models give expected values; fuzz and invariants check them on the real contract; for each feature, deliberate bugs were inserted and every reported mutant was killed or analysed (counted per feature, not as one total). | 10 |
