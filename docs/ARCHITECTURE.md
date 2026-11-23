@@ -375,6 +375,12 @@ Measured-net deposit, P1+ with X1 (DECISIONS M8-1 to M8-13; implemented in M8 co
   - Zero cases: a `RequestMax` of 0 → `ZeroAmount()`; step-2 target 0 → `InsufficientDepositAmount()`; re-planned second target 0 → `InsufficientDepositAmount()` before the second transfer; second net 0 → `InsufficientShares()`.
   - Unmatched excess is included in the recorded reserves. It can transfer economic value from the depositor to pre-existing LP holders, while the depositor keeps a proportional claim through the newly minted shares.
   - Postcondition: BI-2′ (§5.5).
+  - **Setting `maxExcess` for exact-delivery (Tier 0) tokens (M10, 2026-11-23; guidance, no rule change).** Floor-shares (M8-14) usually leave `u_i ≥ 1` even for Tier 0: in an integer model of random Tier 0 deposits (`S = isqrt(r0·r1)`) 143,398 of 200,000 had `u > 0` (model, not the Solidity code). So `maxExcess_i = 0` makes many honest deposits revert `ExcessContributionTooHigh`; this is a safe failure, not a loss.
+    - [proven] (F1-T1) Tier 0, `σ` not saturated: `u_i < X_i = r_i/S + r_i/r_j`, with `r`, `S` at execution.
+    - Hence the smallest setting that never rejects a Tier 0 deposit for its excess is `M_i = ⌈X_i⌉ − 1 = ⌊(r_i·(r_j + S) − 1)/(S·r_j)⌋`.
+    - The bound depends on the state at **execution**. A UI that computes `M_i` from a quote must allow for state changes in between (or accept that the deposit may revert); a too-small value never changes what is minted, it only makes the call revert.
+    - Not valid for taxed or otherwise non-exact tokens: there the unmatched amount is dominated by the tax and the pull order (REPORT_NOTES §1.5), and `maxExcess` is the user's own tolerance.
+    - Tests: L44 (TEST_MATRIX §3.2).
 
 ### 7.3 `removeLiquidity(shares, min0Net, min1Net, recipient, deadline) → (net0, net1)`
 
