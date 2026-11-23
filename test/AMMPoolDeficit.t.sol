@@ -115,8 +115,9 @@ contract AMMPoolDeficitTest is PoolStateFixture {
     /// R24 (M11): a direct top-up during a deficit refills the reserve's backing without `sync()`.
     ///      Partial top-up: still in deficit, so add, remove and both swaps keep reverting
     ///      `ReserveDeficit` with no state change. Exact top-up (balance == reserve): the same
-    ///      calls succeed. The reserves are never changed by the top-ups and no `ReserveSynced`
-    ///      is emitted. Exact-top-up coverage also exists in
+    ///      calls succeed directly, with no `sync()` in between; the reserves are never changed
+    ///      by the top-ups. (`sync()` after an exact top-up is a no-op: separate test below.)
+    ///      Exact-top-up coverage also exists in
     ///      `test_R08_boundaryEqualPassesMinusOneReverts` (deficit 1) and
     ///      `AMMPoolF1SurplusAccounting.test_F1T2_slashAboveSurplus_deficitAndBothRecoveries`
     ///      (path B); this test adds the partial step and a larger deficit.
@@ -129,17 +130,11 @@ contract AMMPoolDeficitTest is PoolStateFixture {
         assertEq(t0.balanceOf(address(pool)) + 1, r0, "still one unit short");
         _assertAllRevert();
 
-        vm.recordLogs();
-        _donate(t0, 1); // exact: balance == reserve
+        _donate(t0, 1); // exact: balance == reserve; no sync() follows
         (uint256 e0, uint256 e1) = _reserves();
         assertEq(e0, r0, "top-up does not change reserve0");
         assertEq(e1, r1, "top-up does not change reserve1");
         assertEq(t0.balanceOf(address(pool)), r0);
-        pool.sync(); // no deficit any more: no event
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        for (uint256 i; i < logs.length; ++i) {
-            assertTrue(logs[i].topics[0] != AMMPool.ReserveSynced.selector, "no ReserveSynced");
-        }
 
         uint256 expected = AMMMath.getAmountOut(10_000, r0, r1);
         vm.prank(bob);
@@ -148,6 +143,20 @@ contract AMMPoolDeficitTest is PoolStateFixture {
         pool.addLiquidity(addParams(1000, 1_000_000, 0, alice, block.timestamp));
         vm.prank(alice);
         pool.removeLiquidity(1000, 0, 0, carol, block.timestamp);
+    }
+
+    /// R24: after an exact top-up, `sync()` is a no-op: no event, reserves unchanged.
+    function test_R24_syncAfterExactTopUpIsNoOp() public {
+        (uint256 r0, uint256 r1) = _reserves();
+        _slashPool(t0, 1000);
+        _donate(t0, 1000);
+        vm.recordLogs();
+        pool.sync();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 0, "no ReserveSynced (no event at all)");
+        (uint256 e0, uint256 e1) = _reserves();
+        assertEq(e0, r0);
+        assertEq(e1, r1);
     }
 
     /// R24: with both tokens in deficit, fully refilling only one still blocks everything.
