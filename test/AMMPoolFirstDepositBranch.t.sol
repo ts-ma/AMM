@@ -14,9 +14,13 @@ import {addParams} from "./utils/AddParams.sol";
 ///         `isqrt(A·B) − 1000 = 1,999,999,999,999,999,999,000` shares. eve deposits first, so bob's
 ///         call takes the later path at eve's ratio:
 ///         - same ratio: bob's caps are pulled in full and σ = 2e21 ≥ the expectation;
-///         - any other ratio: σ falls below the expectation, so `minShares` = expectation
-///           reverts `InsufficientShares` with no state change; with `minShares = 0` the call
-///           succeeds at eve's price (bob deposits a different ratio than intended);
+///         - a clearly different ratio (tested: 1:1 and a relative skew of 3e-6): σ falls below
+///           the expectation, so `minShares` = expectation reverts `InsufficientShares` with no
+///           state change; with `minShares = 0` the call succeeds at eve's price (bob deposits
+///           a different ratio than intended);
+///         - a slightly different ratio (relative skew 2.5e-19): σ still meets the expectation,
+///           because on the later path bob pays no lock (the 1000 shares absorb a shortfall), so
+///           the initial-path `minShares` does not detect every front-run;
 ///         - the excess fields, which have no effect on an initial deposit (M8-13 (c)), become
 ///           active on the later path: `maxExcess = 0` can then revert
 ///           `ExcessContributionTooHigh`.
@@ -138,5 +142,23 @@ contract AMMPoolFirstDepositBranchTest is Test {
         assertEq(n0, 1e21);
         assertEq(n1, 3_999_988_000_035_999_892_000);
         assertEq(shares, 1_999_996_000_011_999_963_999);
+    }
+
+    /// @dev Regression (M10): a front-run at a slightly different ratio still passes bob's
+    ///      original initial-deposit `minShares`. eve deposits (1e18, 4e18 + 1), relative skew
+    ///      2.5e-19, S = 2e18. On the later path bob pays no lock, so σ = 1,999,999,999,999,999,999,500
+    ///      ≥ EXPECTED (by 500) and the call succeeds even with `maxExcess = 0` (u = (0, 0)).
+    ///      bob deposits at eve's ratio (n0 = 999,999,999,999,999,999,750 < A), not his own: the
+    ///      initial-path `minShares` does not detect this front-run. Values: integer Python model.
+    function test_L45_slightSkewStillPassesInitialMinShares() public {
+        _frontRun(1e18, 4e18 + 1);
+        assertEq(pool.totalSupply(), 2e18);
+        vm.prank(bob);
+        (uint256 n0, uint256 n1, uint256 shares) = pool.addLiquidity(_bobParams(EXPECTED, 0));
+        assertEq(n0, 999_999_999_999_999_999_750, "bob deposits at eve's ratio");
+        assertEq(n1, B);
+        assertEq(shares, 1_999_999_999_999_999_999_500);
+        assertGe(shares, EXPECTED, "initial-path minShares passes");
+        assertEq(pool.balanceOf(address(pool)), 1000, "the lock was minted for eve's deposit, not bob's");
     }
 }
