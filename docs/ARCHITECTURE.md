@@ -133,7 +133,7 @@ Not an invariant: `reserve0 × reserve1` may fall in `removeLiquidity` and `sync
 
 ## 6. Mathematics
 
-Notation: `r0`, `r1` recorded reserves before the call; `S` LP `totalSupply` before the call; `D = 10_000`; `t_i` tax hint in bps.
+Notation: `r0`, `r1` recorded reserves before the call; `S` LP `totalSupply` before the call; `D = 10_000`; `t_i` tax hint in bps (used only in the historical L-α §6.2; the implemented deposit has no tax hint, DECISIONS M8-1).
 
 ### 6.1 Initial deposit (D5-B, U2)
 
@@ -259,12 +259,19 @@ Solidity 0.8 checked arithmetic reverts on overflow instead of wrapping, so an o
 | Swap denominator | `rIn × D + aFee` checked | Reverts on overflow | `rIn × D + a × 9970 < 2^256` |
 | Swap `out` | `mulDiv(aFee, rOut, den)` | Result `≤ rOut`, so cannot exceed `uint256`; reverts if `den = 0` (excluded by `a > 0`) | As above |
 | Initial shares | `net0 × net1` checked, then `Math.sqrt` | Reverts if product `≥ 2^256` | `net0 × net1 < 2^256`, e.g. both `< 2^128` (about `3.4 × 10^20` whole 18-decimal tokens) |
-| Later shares | `mulDiv(net_i, S, r_i)` | Reverts if the result exceeds `uint256` | `net_i × S / r_i < 2^256` |
+| Later shares (historical, M4) | `mulDiv(net_i, S, r_i)` | Reverted if the result exceeded `uint256` | Replaced in M8 by the saturating row below (DECISIONS M8-4) |
+| Later shares `σ` (M8) | `min_i _mulDivSat(n_i, S, r_i)`: 512-bit product; `hi == 0` → plain division; `0 < hi < r_i` → `mulDiv`; `hi ≥ r_i` → `type(uint256).max` | Never reverts (`r_i > 0`: a terminal pool is rejected before the pulls, M6-1); an oversized `σ` is rejected later by the checked `S + σ` | All inputs. Which error an oversized `σ` reports depends on the M8-13 (d) order: `InsufficientShares` wins when `minShares > σ` |
+| Supply after a later deposit (M8) | checked `S + σ` (`_requireSupplyFits`, repeated inside `_mint`) | Panic `0x11` if `S + σ ≥ 2^256` | `S + σ < 2^256` |
+| Re-plan of the second token (M8) | `min(RequestMax_s, _mulDivSat(n_f, r_s, r_f))` | Never reverts: saturates, then the cap binds | All inputs (`r_f > 0` as above) |
+| Matched amount (M8) | `mulDiv(σ, r_i, S, Ceil)` | Cannot revert: `σ ≤ n_i·S/r_i`, so the result is `≤ n_i` [proven] | All inputs that reach it |
+| Unmatched amount `u_i` (M8) | `n_i − mulDiv(σ, r_i, S, Ceil)` | Cannot underflow (previous row) | All inputs that reach it |
+| Inbound measurement | `balanceAfter − balanceBefore` (checked) | Panic `0x11` if the Pool's balance falls during its own `transferFrom` (unsupported token behaviour) | Supported tokens |
+| BI-2′ and payer-debit comparisons (M8) | `end < start \|\| end − start < n` and `start > end && start − end > maxDebit` | Never underflow: the subtraction is evaluated only after the guarding comparison | All inputs |
 | Redemption | `mulDiv(shares, r_i, S)` | Result `≤ r_i` | Always within range when `shares ≤ S` |
-| L-α cap | `mulDiv(amountMax_i, t_i, D)` | Result `< amountMax_i` | Always within range |
-| L-α target | `Math.mul512(cap0, r1)`, then plain division, `mulDiv`, or the token1 branch; token1 branch likewise (DECISIONS M4H-2) | Never reverts: if `cap0 × r1 / r0 ≥ 2^256` the token1 cap necessarily binds, and the token1 branch result is `< cap0` | All inputs (verified by the Z06 differential fuzz) |
-| L-α gross | `mulDiv(T_i, D, D − t_i, Ceil)` | Reverts if result exceeds `uint256` | `T_i × D / (D − t_i) < 2^256` |
-| Reserve updates | `reserve += net`, `reserve −= amount` checked | Reverts on overflow/underflow | Under BI-1 with truthful `balanceOf`, `reserve_i ≤ balance_i`; not asserted beyond checked arithmetic |
+| L-α cap (historical, retired by M8-1) | `mulDiv(amountMax_i, t_i, D)` | Result `< amountMax_i` | Always within range |
+| Step-2 target (M4H-2 code; formerly "L-α target", still used in `_pullLater` with `cap_i = RequestMax_i`) | `Math.mul512(cap0, r1)`, then plain division, `mulDiv`, or the token1 branch; token1 branch likewise (DECISIONS M4H-2) | Never reverts: if `cap0 × r1 / r0 ≥ 2^256` the token1 cap necessarily binds, and the token1 branch result is `< cap0` | All inputs (verified by the Z06 differential fuzz) |
+| L-α gross (historical, retired by M8-1) | `mulDiv(T_i, D, D − t_i, Ceil)` | Reverts if result exceeds `uint256` | `T_i × D / (D − t_i) < 2^256` |
+| Reserve updates | `reserve += net`, `reserve −= amount` checked | Reverts on overflow/underflow | Under BI-1 with truthful `balanceOf`, `reserve_i ≤ balance_i`; not asserted beyond checked arithmetic. Later deposit (M8) [proven]: no deficit at entry gives `r_i ≤ B_i^start`, and BI-2′ gives `B_i^end − B_i^start ≥ n_i`, so `r_i + n_i ≤ B_i^end < 2^256` and `reserve_i += n_i` cannot overflow; the initial deposit writes `reserve_i = n_i` |
 | §6.5 in tests | Products of two `uint256` values (`den × (rOut − out)`, `(rIn × D) × rOut`, `aFee × rOut`, `out × den`) | Computed exactly as 512-bit values by a test helper; compared as 512-bit numbers | No overflow possible in the test helper for any `uint256` inputs (DECISIONS M2-9) |
 
 **Test input ranges:** unit tests use the reference values in §6.7; fuzz tests use `[1, 2^112]` for reserves and amounts, plus mixed 6/18-decimal scales; boundary tests (Z06) go just below and just above each threshold and expect success and a revert respectively, never a wrong value.
@@ -289,7 +296,7 @@ Case 1 by hand: `9.97 × 10^13 / 10,099,700,000 = 9871.58…` → 9,871. For all
 
 Signatures, event names and custom-error names are `PROPOSED` until the relevant milestone. Common rules:
 
-- Every state-changing function is `nonReentrant`.
+- Every function that can change reserves or LP supply (`addLiquidity`, `removeLiquidity`, `swapExactInput`, `sync`, `skim`) is `nonReentrant`. The inherited LP ERC-20 functions (`transfer`, `transferFrom`, `approve`) are not: they change only LP balances and allowances, never reserves or `totalSupply`, and `addLiquidity` reads `totalSupply()` before its first token call, so an LP transfer from a token callback cannot change any amount the Pool computes; mint and burn stay guarded by `SupplyChangeOutsideGuard` (§7.9). (Wording corrected 2026-11-23; the earlier "every state-changing function" over-stated the guard.)
 - Deadline valid iff `block.timestamp <= deadline`.
 - User-supplied `recipient ∉ {address(0), address(this)}` (U7); the internal lock mint is exempt.
 - Token transfers use `SafeERC20`.
