@@ -57,9 +57,9 @@ The first depositor sets the price and receives `⌊√(n0·n1)⌋ − 1000` sha
 
 ### 3.3 A pool-level measure that never decreases
 
-[proof] Add and remove round against the actor, so per token `r_i'·S ≥ r_i·S'`; a swap keeps `S` and does not decrease `k` (§2.3). Therefore `k/S²` (equivalently `√(r0·r1)/S`, the geometric-mean reserve per share) never decreases through add, remove or swap [test: invariant I10, 2 suites × 256 runs × 500 random calls]. Exceptions: the initial deposit (`S` starts at 0) and `sync()` after a deficit, which lowers `k` (§8.2).
+[proof] Add and remove round against the actor, so per token `r_i'·S ≥ r_i·S'`; a swap keeps `S` and does not decrease `k` (§2.3). Therefore `k/S²` never decreases through add, remove or swap. Because the square root is increasing, this is the same monotonicity statement as for `√(r0·r1)/S`, the geometric-mean reserve per share: one is non-decreasing exactly when the other is [test: invariant I10, 2 suites × 256 runs × 500 random calls]. Exceptions: the initial deposit (`S` starts at 0) and `sync()` after a deficit, which lowers `k` (§8.2).
 
-This measure is **not** the market value of a share. A swap lowers the per-share claim on the output token, and when the external price moves an LP can be worth less than simply holding the two tokens (impermanent loss). The measure only says that no add, remove or swap moves value away from existing shares under the pool's own pricing rule.
+This measure is **not** the market value of a share. A swap lowers the per-share claim on the output token, and when the external price moves an LP can be worth less than simply holding the two tokens (impermanent loss).
 
 ## 4. Contracts and data structures
 
@@ -118,7 +118,7 @@ State: reserves `(10,000, 20,000)`, `S = ⌊√(2·10⁸)⌋ = 14,142`; token1 c
 
 Each bound is binding: `maxDebit1 = 1,999`, `maxExcess0 = 99` or `minShares = 1,273` reverts (`PayerDebitTooHigh`, `ExcessContributionTooHigh`, `InsufficientShares`) with no state change [test].
 
-An immediate full redemption returns `(907, 1,798)` [test] against a payment of `(1,000, 2,000)`. The token1 gap is mostly the tax (200), which never reached the Pool. The token0 gap is the excess: the 100 unmatched token0 joined the reserves, and bob owns only `1,272/15,414 ≈ 8.3 %` of them. Finally, each token's redemption is rounded down: the exact claims are 907.75 and 1,798.99, so in that last step bob loses less than one smallest unit **per token**.
+An immediate full redemption returns `(907, 1,798)` [test] against a payment of `(1,000, 2,000)`. The token1 gap is mostly the tax (200), which never reached the Pool. The token0 gap is the excess: the 100 unmatched token0 joined the reserves, and bob owns only `1,272/15,414 ≈ 8.3 %` of them. Finally, each token's redemption is rounded down: the exact claims are approximately 907.75 and 1,798.99, so in that last step bob loses less than one smallest unit **per token**.
 
 ### 5.3 Steps in the code
 
@@ -249,14 +249,12 @@ Protection has a price: the measured deposit costs +10,264 gas (+10.4 %) more th
 
 ### 11.2 Optimisations adopted and rejected
 
-In the code: custom errors, immutable addresses, a transient-storage reentrancy lock, reserves cached in memory within each function, and a single 512-bit product in step 2 (chosen by measurement). Measured and **not adopted** [gas]:
+| | Change | Measured effect [gas] | Decision |
+|---|---|---|---|
+| Adopted | `removeLiquidity` burns the caller's shares **before** computing the amounts (`mulDiv`) | a withdrawal that fails for insufficient LP costs 27,926 instead of 30,469 (−2,543); a successful one 6 gas less (TEST_MATRIX §14.1, H1) | kept: cheaper failure and the clearer error (`ERC20InsufficientBalance` instead of an overflow panic) |
+| Rejected | VP: `uint112` reserves in one storage slot (as Uniswap V2) | ≈ −4,300 per add/remove/swap, −21,567 on the first deposit, but +159,273 per deployment | caps reserves at `2¹¹²` (13 range tests fail; a new error case and range rules would be needed) |
 
-| Variant | Saving | Reason not adopted |
-|---|---|---|
-| VP: `uint112` reserves in one slot | ≈ 4,300 per add/remove/swap; 21,567 on the first deposit | +159,273 per deployment; caps reserves at `2¹¹²` (13 range tests fail; new error case and range rules needed) |
-| VU: `unchecked` on 14 proven-safe operations | 263–534 per call; 29,565 per deployment | small; the overflow proofs would become load-bearing, so a mistake would wrap silently |
-| Reuse of balance readings (VA/VB/VC) | 684–1,924 per deposit | weakens the fresh-snapshot rule; changes an error order for unsupported tokens |
-| On-chain swap assertion | (cost +836) | redundant with §2.3; enforced by tests |
+Other measured variants and their reasons are in TEST_MATRIX §14.
 
 ### 11.3 Uniswap V2, qualitative
 
@@ -268,7 +266,7 @@ Most important for users and LPs:
 1. **Exit is not guaranteed for every token** accepted on deposit (§6.2, §9.3); no recovery path.
 2. **Excess is not refunded**; with taxed tokens it is first-order in the tax, bounded only by `maxExcess` (§5.7).
 3. **`minShares` bounds a share count, not value**; no per-token deposit minimum; the first deposit cannot be fully protected from front-running (§5.5, §5.6).
-4. **A deficit of any size freezes the pool** until someone calls `sync()` or tops it up; LPs then bear the loss plus arbitrage (§8.2).
+4. **A deficit of any size freezes the pool** until one of two things happens (§8.2, §8.3): `sync()` writes the reserve down to the balance, and the LPs bear that write-down pro rata, plus the arbitrage after the price jump; or a third party tops the balance back up, and the recorded reserves stay unchanged, so the LPs bear no write-down.
 5. **The excess inflation channel** is bounded but open; the supported-token path is model-only (§9.2).
 
 | Other disclosed limitations | § |
