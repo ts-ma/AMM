@@ -5,8 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {AMMPool} from "../../src/AMMPool.sol";
+import {IAMMPool} from "../../src/interfaces/IAMMPool.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
-import {addParams, addParamsOrdered} from "../utils/AddParams.sol";
+import {addParams} from "../utils/AddParams.sol";
 
 /// @notice Stateful-invariant handler for one AMMPool over two supported tokens (Tier 0 or U8
 ///         taxed with a known fixed rate, truthful `balanceOf`). TEST_MATRIX §12 (M10 P0).
@@ -63,7 +64,7 @@ contract AMMPoolHandler is Test {
         vm.prank(actors[0]);
         (,, uint256 shares) = pool_.addLiquidity(addParams(1e21, 3e21, 0, actors[0], block.timestamp));
         ghostMinted = 1000 + shares;
-        for (uint256 k; k < 8; ++k) {
+        for (uint256 k; k < 9; ++k) {
             statKeys.push(bytes32(k));
         }
     }
@@ -143,17 +144,46 @@ contract AMMPoolHandler is Test {
     // Actions
     // ------------------------------------------------------------------
 
+    /// @dev Boundary `maxDebit` per token: `T_i` or `T_i − 1` (seed bits 2 and 3), where `T_i` is
+    ///      the step-2 target at the current reserves (a model used only to place the bound,
+    ///      not to predict the outcome). For Tier 0 and U8 tokens the payer's debit equals the
+    ///      gross amount requested, which is `T_i` (first token) or at most `T_s` (re-planned
+    ///      second token), so `T_i` must pass and `T_i − 1` on the first token must revert.
+    function _tightDebit(uint256 a0, uint256 a1, uint256 seed) internal view returns (uint256 md0, uint256 md1) {
+        (uint256 r0, uint256 r1) = pool.getReserves();
+        uint256 x0 = a0;
+        uint256 x1 = Math.mulDiv(a0, r1, r0);
+        if (x1 > a1) {
+            x0 = Math.mulDiv(a1, r0, r1);
+            x1 = a1;
+        }
+        md0 = (seed >> 2) & 1 == 1 || x0 == 0 ? x0 : x0 - 1;
+        md1 = (seed >> 3) & 1 == 1 || x1 == 0 ? x1 : x1 - 1;
+    }
+
     struct AddCtx {
         address who;
         uint256 w0;
         uint256 w1;
+        uint256 md0; // maxDebit0
+        uint256 md1; // maxDebit1
     }
 
     /// @dev Caps: `a0 ∈ [1, 1e24]`. If `independent`, `a1 ∈ [1, 1e24]` is drawn on its own (often
     ///      far off the ratio, so one cap binds and tiny caps exercise the expected reverts);
     ///      otherwise `a1 = ceil(a0·r1/r0) + slack` with `slack ∈ [0, a0]` (near the ratio, so most
     ///      deposits succeed and the re-plan runs for taxed tokens).
-    function addLiquidity(uint256 actorSeed, uint256 a0, uint256 a1, bool token1First, bool independent) external {
+    ///      `maxDebit` (I6): unbounded when `debitSeed % 4 != 0`; otherwise a finite boundary value
+    ///      per token (`_tightDebit`), so both `PayerDebitTooHigh` and successes with
+    ///      `debit_i ≤ maxDebit_i` at the boundary occur.
+    function addLiquidity(
+        uint256 actorSeed,
+        uint256 a0,
+        uint256 a1,
+        bool token1First,
+        bool independent,
+        uint256 debitSeed
+    ) external {
         a0 = bound(a0, 1, 1e24);
         if (independent) {
             a1 = bound(a1, 1, 1e24);
@@ -161,18 +191,32 @@ contract AMMPoolHandler is Test {
             (uint256 r0, uint256 r1) = pool.getReserves();
             a1 = Math.mulDiv(a0, r1, r0, Math.Rounding.Ceil) + bound(a1, 0, a0);
         }
-        AddCtx memory c = AddCtx(_actor(actorSeed), 0, 0);
+        AddCtx memory c = AddCtx(_actor(actorSeed), 0, 0, type(uint256).max, type(uint256).max);
         // An actor cannot authorise more than it holds; after near-total exits the ratio can be
         // extreme, so the near-ratio cap is clipped to the wallet (a model bound, not a Pool rule).
         a0 = Math.min(a0, t0.balanceOf(c.who));
         a1 = Math.min(a1, t1.balanceOf(c.who));
         if (a0 == 0 || a1 == 0) return; // ZeroAmount is an argument check, covered by unit tests
+        if (debitSeed % 4 == 0) (c.md0, c.md1) = _tightDebit(a0, a1, debitSeed);
         c.w0 = t0.balanceOf(c.who);
         c.w1 = t1.balanceOf(c.who);
         State memory a = _state();
 
         vm.prank(c.who);
-        try pool.addLiquidity(addParamsOrdered(a0, a1, 0, c.who, block.timestamp, token1First)) returns (
+        try pool.addLiquidity(
+            IAMMPool.AddLiquidityParams({
+                amount0RequestMax: a0,
+                amount1RequestMax: a1,
+                maxDebit0: c.md0,
+                maxDebit1: c.md1,
+                maxExcess0: type(uint256).max,
+                maxExcess1: type(uint256).max,
+                minShares: 0,
+                recipient: c.who,
+                deadline: block.timestamp,
+                token1First: token1First
+            })
+        ) returns (
             uint256 n0, uint256 n1, uint256 shares
         ) {
             State memory b = _state();
@@ -183,19 +227,24 @@ contract AMMPoolHandler is Test {
             assertEq(b.supply, a.supply + shares, "I1 add: supply += shares");
             uint256 d0 = c.w0 - t0.balanceOf(c.who);
             uint256 d1 = c.w1 - t1.balanceOf(c.who);
-            assertTrue(d0 >= n0 && d0 <= a0, "add: net0 <= debit0 <= request cap");
-            assertTrue(d1 >= n1 && d1 <= a1, "add: net1 <= debit1 <= request cap");
+            assertTrue(d0 >= n0 && d0 <= a0, "I6 add: net0 <= debit0 <= request cap");
+            assertTrue(d1 >= n1 && d1 <= a1, "I6 add: net1 <= debit1 <= request cap");
+            assertLe(d0, c.md0, "I6 add: debit0 <= maxDebit0");
+            assertLe(d1, c.md1, "I6 add: debit1 <= maxDebit1");
+            if (debitSeed % 4 == 0) _count(8, true);
             _assertPerShareNotDown(a, b);
             ghostMinted += shares;
             _count(0, true);
         } catch (bytes memory reason) {
             bytes4 s = _sel(reason);
             assertTrue(
-                s == AMMPool.InsufficientDepositAmount.selector || s == AMMPool.InsufficientShares.selector,
+                s == AMMPool.InsufficientDepositAmount.selector || s == AMMPool.InsufficientShares.selector
+                    || (s == AMMPool.PayerDebitTooHigh.selector && (c.md0 < a0 || c.md1 < a1)),
                 "unexpected addLiquidity revert"
             );
             _assertUnchanged(a);
             _count(0, false);
+            if (s == AMMPool.PayerDebitTooHigh.selector) _count(8, false);
         }
     }
 
@@ -375,9 +424,18 @@ contract AMMPoolHandler is Test {
     // ------------------------------------------------------------------
 
     function logStats() external view {
-        string[8] memory names =
-            ["addLiquidity", "removeLiquidity", "swap", "sync", "skim", "donate", "transferLP", "transferLPToPool"];
-        for (uint256 k; k < 8; ++k) {
+        string[9] memory names = [
+            "addLiquidity",
+            "removeLiquidity",
+            "swap",
+            "sync",
+            "skim",
+            "donate",
+            "transferLP",
+            "transferLPToPool",
+            "add finite maxDebit (ok / PayerDebitTooHigh)"
+        ];
+        for (uint256 k; k < 9; ++k) {
             uint256[2] memory s = stats[bytes32(k)];
             console.log(names[k], s[0], s[1]);
         }
