@@ -224,8 +224,9 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         // msg.sender): M8-3.
         uint256 poolStart0 = IERC20(token0).balanceOf(address(this));
         uint256 poolStart1 = IERC20(token1).balanceOf(address(this));
-        uint256 payerStart0 = IERC20(token0).balanceOf(msg.sender);
-        uint256 payerStart1 = IERC20(token1).balanceOf(msg.sender);
+        // EXPERIMENT A: an unbounded maxDebit can never fail, so its snapshots are skipped.
+        uint256 payerStart0 = p.maxDebit0 == type(uint256).max ? 0 : IERC20(token0).balanceOf(msg.sender);
+        uint256 payerStart1 = p.maxDebit1 == type(uint256).max ? 0 : IERC20(token1).balanceOf(msg.sender);
 
         if (supply == 0) {
             // Initial deposit (ARCHITECTURE §6.1): no ratio exists yet, so pull both caps in the
@@ -578,10 +579,14 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      Trust assumption: `balanceOf` is truthful (ARCHITECTURE §3).
     /// @custom:report docs/REPORT.md §5.3 step 5, §5.4 (`maxDebit`)
     function _checkPayerDebit(uint256 start0, uint256 start1, uint256 maxDebit0, uint256 maxDebit1) private view {
-        uint256 end0 = IERC20(token0).balanceOf(msg.sender);
-        if (start0 > end0 && start0 - end0 > maxDebit0) revert PayerDebitTooHigh();
-        uint256 end1 = IERC20(token1).balanceOf(msg.sender);
-        if (start1 > end1 && start1 - end1 > maxDebit1) revert PayerDebitTooHigh();
+        if (maxDebit0 != type(uint256).max) {
+            uint256 end0 = IERC20(token0).balanceOf(msg.sender);
+            if (start0 > end0 && start0 - end0 > maxDebit0) revert PayerDebitTooHigh();
+        }
+        if (maxDebit1 != type(uint256).max) {
+            uint256 end1 = IERC20(token1).balanceOf(msg.sender);
+            if (start1 > end1 && start1 - end1 > maxDebit1) revert PayerDebitTooHigh();
+        }
     }
 
     /// @dev Reverts with Panic 0x11 (checked arithmetic) if `supply + shares` overflows.
