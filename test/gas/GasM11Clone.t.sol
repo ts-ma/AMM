@@ -19,12 +19,22 @@ contract Direct {
     function f() external view returns (uint256) {
         return uint160(a) ^ uint160(b) ^ uint160(c);
     }
+
+    /// Control: same result, the three addresses are not read.
+    function g() external pure returns (uint256) {
+        return uint160(address(1)) ^ uint160(address(2)) ^ uint160(address(3));
+    }
 }
 
 contract Impl {
     function f() external view returns (uint256) {
         (address a, address b, address c) = abi.decode(Clones.fetchCloneArgs(address(this)), (address, address, address));
         return uint160(a) ^ uint160(b) ^ uint160(c);
+    }
+
+    /// Control: same result, the clone arguments are not read.
+    function g() external pure returns (uint256) {
+        return uint160(address(1)) ^ uint160(address(2)) ^ uint160(address(3));
     }
 }
 
@@ -51,6 +61,26 @@ contract GasM11Clone is Test {
         uint256 g = gasleft();
         x.f();
         emit log_named_uint("GAS call via clone (delegatecall + fetchCloneArgs)", g - gasleft());
+    }
+
+    function test_call_direct_noRead() public {
+        Direct x = d;
+        uint256 g = gasleft();
+        x.g();
+        emit log_named_uint("GAS call direct, no argument read", g - gasleft());
+    }
+
+    function test_call_clone_noRead() public {
+        Impl x = Impl(cl);
+        uint256 g = gasleft();
+        x.g();
+        emit log_named_uint("GAS call via clone, no argument read (delegatecall only)", g - gasleft());
+    }
+
+    function test_sameResults() public view {
+        assertEq(d.f(), Impl(cl).f());
+        assertEq(d.g(), Impl(cl).g());
+        assertEq(d.f(), d.g());
     }
 
     function test_create_clone() public {

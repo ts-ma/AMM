@@ -79,6 +79,52 @@ contract GasM11 is Test {
         _m(taxPool, addParamsOrdered(1e18, 1e19, 0, alice, block.timestamp, true), "GAS TAX later, taxed token first (re-plan), maxDebit MAX");
     }
 
+    // ---- Mixed maxDebit settings (same ordinary-token deposit: token0 first, token0 cap binds,
+    //      targets and actual debits (1e18, 2e18)). One bound is finite, the other unbounded.
+
+    function _mixed(uint256 d0, uint256 d1) internal view returns (IAMMPool.AddLiquidityParams memory p) {
+        p = addParams(1e18, 1e19, 0, alice, block.timestamp);
+        (p.maxDebit0, p.maxDebit1) = (d0, d1);
+    }
+
+    function test_g_t0_mixed_max0_finite1() public {
+        _m(pool, _mixed(type(uint256).max, 2e18), "GAS T0 later, maxDebit (MAX, finite)");
+    }
+
+    function test_g_t0_mixed_finite0_max1() public {
+        _m(pool, _mixed(1e18, type(uint256).max), "GAS T0 later, maxDebit (finite, MAX)");
+    }
+
+    /// The finite side still binds: equal to the actual debit succeeds, one unit tighter reverts.
+    function _checkFiniteSideBinds(bool finite0) internal {
+        uint256 b0 = t0.balanceOf(alice);
+        uint256 b1 = t1.balanceOf(alice);
+        uint256 s = pool.totalSupply();
+        IAMMPool.AddLiquidityParams memory tight =
+            finite0 ? _mixed(1e18 - 1, type(uint256).max) : _mixed(type(uint256).max, 2e18 - 1);
+        vm.expectRevert(AMMPool.PayerDebitTooHigh.selector);
+        vm.prank(alice);
+        pool.addLiquidity(tight);
+        assertEq(t0.balanceOf(alice), b0);
+        assertEq(t1.balanceOf(alice), b1);
+        assertEq(pool.totalSupply(), s);
+
+        IAMMPool.AddLiquidityParams memory exact =
+            finite0 ? _mixed(1e18, type(uint256).max) : _mixed(type(uint256).max, 2e18);
+        vm.prank(alice);
+        pool.addLiquidity(exact);
+        assertEq(b0 - t0.balanceOf(alice), 1e18, "debit token0");
+        assertEq(b1 - t1.balanceOf(alice), 2e18, "debit token1");
+    }
+
+    function test_mixed_finiteToken0StillBinds() public {
+        _checkFiniteSideBinds(true);
+    }
+
+    function test_mixed_finiteToken1StillBinds() public {
+        _checkFiniteSideBinds(false);
+    }
+
     function test_g_swap_t0() public {
         AMMPool pl = pool;
         address tin = address(t0);
