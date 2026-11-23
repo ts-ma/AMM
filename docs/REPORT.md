@@ -341,7 +341,7 @@ No formal verification, no symbolic execution (halmos, mythril), no slither / ad
 
 ### 10.6 Final regression
 
-To be filled at the end of M11 with the commit, configuration and test count.
+2026-11-23, on commit `87a557f` (branch `m11-report`; `src/` logic identical to `550bc80`, verified by identical bytecode built without CBOR metadata): `forge build`, then `forge test` with default fuzz runs and with `FOUNDRY_FUZZ_RUNS=10000`: **489 tests in 55 suites passed, 0 failed** in both settings. Configuration checked with `forge config`: solc 0.8.38, optimizer on, 200 runs, `evm_version = osaka`, `via_ir = false`, `isolate = true`; forge 1.9.0; OpenZeppelin v5.7.0. Invariant campaigns use their inline setting (256 runs × 500 calls) in both settings.
 
 ---
 
