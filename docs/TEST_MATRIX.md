@@ -443,21 +443,28 @@ A fourth fuzz test feeds raw `uint256` triples to the classifier and checks the 
 
 ## 12. Stateful invariants (M10)
 
-The handler randomly calls every public function and also transfers tokens (and LP) directly to the Pool.
+**Implemented 2026-11-23 (M10 P0):** `test/AMMPoolInvariant.t.sol` + `test/invariant/AMMPoolHandler.sol`. Two campaigns with the same handler: `AMMPoolInvariantTier0Test` (two standard tokens) and `AMMPoolInvariantTaxedTest` (two U8 taxed tokens, 1 % / 3 %). Configuration (inline `forge-config`): 256 runs × depth 500 = 128,000 handler calls per campaign, `fail-on-revert = true`, so an assertion inside the handler fails the campaign instead of being discarded. Result 2026-11-23 on `acbb9f8` + this commit: both passed, 0 unclassified reverts.
+
+- **Actions:** later deposit (caps either independent in `[1, 1e24]` or near the ratio, either pull order), withdrawal (1 bp to 100 % of the actor's LP), swap in both directions (`[1, 1e23]`), `sync`, `skim`, direct donation (`[1, 1e22]`, minted to the Pool), LP transfer between actors, LP transfer to the Pool (must revert `LPTransferToPool`).
+- **Premises / model:** one Pool, three actors (wallets topped up by minting when below 1e27, which changes no Pool state), supported tokens with truthful `balanceOf`, no deficit-creating token, initial deposit (1e21, 3e21) in the handler's constructor, so every sequence runs with `S > 0`. Expected values come from the pre-call state and the token model, not from the Pool.
+- **Reverts:** every Pool call runs in try/catch; a revert is accepted only with the selector the expectation predicts (`InsufficientDepositAmount` / `InsufficientShares` on deposit; `InsufficientLiquidityBurned` only if an amount rounds to 0; `InsufficientOutputAmount` only if the formula gives 0; `LPTransferToPool`). Any other revert fails.
+- **Not modelled:** unsupported tokens (deficits, hooks, in-call foreign transfers: T9, T30), the initial-deposit path inside sequences, reserves near 2^256, several Pools, MIN-NET thresholds above 0 (boundaries are unit-tested: S04, S06, W04, Z04).
+- **Mutation check** (per-file restore verified by hash and `git status`): sync absorbing surplus, X2-style `reserve += matched`, swap fee missing, redemption rounded up, `skim` sending surplus + 1, LP-SELF removed, later shares rounded up, withdrawal not lowering `reserve1`: **8/8 killed**. Note on which check killed them: fee missing and redemption rounded up were killed first by the exact-expectation checks (A8 amount), shares rounded up by the revert classification (a deposit revert with an unexpected selector); this run does not show that I3 or I10 alone would have caught them.
 
 | ID | Invariant | Status |
 |---|---|---|
-| I1 | BI-7 and BI-8: LP `totalSupply` = minted − burned; Pool's LP == 1000 after the first deposit; no protocol shares | `NOT IMPLEMENTED` |
-| I2 | BI-1: `balance_i ≥ reserve_i` with supported tokens | `NOT IMPLEMENTED` |
-| I3 | BI-9 for every successful swap | `NOT IMPLEMENTED` |
-| I4 | Reverted calls leave no state change | `NOT IMPLEMENTED` |
-| I5 | Factory has no duplicate or unregistered pair | `NOT IMPLEMENTED` |
-| I6 | Adaptive deposits never debit more than the cap | `NOT IMPLEMENTED` |
-| I7 | BI-5 and BI-6 hold on every outbound transfer | `NOT IMPLEMENTED` |
-| I8 | `skim()` sends only `balance − reserve`, only to `surplusRecipient` | `NOT IMPLEMENTED` |
-| I9 | Only `sync()` lowers a reserve without an outbound transfer; no function moves surplus into reserves | `NOT IMPLEMENTED` |
+| I1 | BI-7 and BI-8: LP `totalSupply` = minted − burned; Pool's LP == 1000 after the first deposit; no protocol shares | `PASSED` (M10) — global: supply = ghost minted − burned, lock == 1000, actors + lock hold the whole supply; per call: add `S += shares`, remove `S −= shares`, LP transfers keep `S` |
+| I2 | BI-1: `balance_i ≥ reserve_i` with supported tokens | `PASSED` (M10) — global, after every call |
+| I3 | BI-9 for every successful swap | `PASSED` (M10) — per swap, exact 512-bit `(rIn·D + a·9970)·(rOut − out) ≥ rIn·rOut·D`, plus `out` equal to the independent formula |
+| I4 | Reverted calls leave no state change | Evidence **reused, no separate campaign** (student, 2026-11-23): the EVM reverts a failed call atomically; the existing unit tests assert full rollback per failure class (M5-6 snapshot style, e.g. `PoolStateFixture`); in addition the handler asserts unchanged reserves, supply, Pool balances and actor LP after every accepted revert |
+| I5 | Factory has no duplicate or unregistered pair | `NOT IMPLEMENTED` (P2) |
+| I6 | Adaptive deposits never debit more than the cap | Partial (M10): per successful deposit the handler asserts `net_i ≤ debit_i ≤ RequestMax_i` (Tier 0 and U8). The `maxDebit` bound itself is covered by L37 / Z09; rename to "request ≤ RequestMax, debit ≤ maxDebit" proposed (P1) |
+| I7 | BI-5 and BI-6 hold on every outbound transfer | `PASSED` for BI-5 (M10): remove, swap and skim — the Pool's balance falls by exactly the expected amount. BI-6 part: the return value equals the recipient's measured increase and matches the token model; minima are 0 in the handler, so the MIN-NET threshold itself is covered by unit tests only |
+| I8 | `skim()` sends only `balance − reserve`, only to `surplusRecipient` | Partial (M10, inside the same handler): `skim` sends exactly the surplus (Pool side), leaves reserves unchanged, and `surplusRecipient` is credited the surplus minus the token's tax. Not checked: that no other address is credited |
+| I9 | Only `sync()` lowers a reserve without an outbound transfer; no function moves surplus into reserves | `PASSED` (M10) — per call: each reserve changes exactly by the call's own measured amount (add `+n_i`, remove `−amount_i`, swap `+a` / `−out`), `sync` changes nothing (no deficit with supported tokens), donations and LP transfers change no reserve; global: `balance_i − reserve_i` equals the ghost surplus (donations minus `skim`) |
+| I10 | (new, approved conditionally 2026-11-23) Per-share value of existing LPs never decreases: for every successful later `addLiquidity` and `removeLiquidity`, `r_i'·S ≥ r_i·S'` for both tokens; for every successful swap `S' = S` and `r0'·r1' ≥ r0·r1`; `skim`, donations and LP transfers change neither reserves nor `S`. Hence `r0·r1/S²` never decreases along these operations. Premises: supported tokens, truthful `balanceOf`, `S > 0`; `sync()` and the initial deposit excluded. Proof per operation: add `n_i·S ≥ σ·r_i` (σ floored); remove `S·amount_i ≤ shares·r_i` (floored); swap §6.5 | `PASSED` (M10) — exact 512-bit cross-multiplied comparisons after every call |
 
-`reserve0 × reserve1` monotonicity is required per swap only (BI-9), not across withdrawals or `sync()`.
+`reserve0 × reserve1` monotonicity is required per swap only (BI-9), not across withdrawals or `sync()`; across add / remove / swap the per-share form I10 holds.
 
 ## 13. Future-only
 
