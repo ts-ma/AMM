@@ -47,9 +47,7 @@ $ anvil
 
 ### Deploy
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+No deployment script is provided: a deployment workflow is out of scope (docs/ARCHITECTURE.md §2, §10).
 
 ### Cast
 
