@@ -1,6 +1,6 @@
 # REPORT NOTES — Draft Material for the Coursework Report
 
-**Last updated:** 2026-11-21
+**Last updated:** 2026-11-23
 
 **Status:** Draft material collected per milestone (MILESTONES §3: "write the matching report section during each milestone"). Not authoritative: decisions and their status are recorded only in [DECISIONS.md](DECISIONS.md); where this file disagrees, DECISIONS.md wins. Claims are labelled **[proven]** (mathematical argument given), **[assumption]** (about token behaviour) or **[needs tests]** (not yet shown by executed tests). No gas figure in this file has been measured unless it cites TEST_MATRIX §14.
 
@@ -99,3 +99,29 @@ The unmatched amount is not the user's loss one-to-one. Under X1 the depositor o
 | New attack surface | JIT capture of excess | refund callbacks, A8 on refund | MEV on deposits, rounding | allowances, stranded funds |
 | Implementation and test burden | medium | medium-high | very high | high (second contract) |
 | Gas | **not measured** (G05) | not measured | not measured | not measured |
+
+### 1.6 Bounding the unmatched contribution: absolute amount vs. percentage of the receipt
+
+**Decision** (DECISIONS M8-2, confirmed 2026-11-23): `maxExcess_i` is an **absolute** bound on token i's unmatched amount `u_i = net_i − ceil(σ·r_i/S)`, in the smallest unit of token i as received by the Pool. A deposit reverts with `ExcessContributionTooHigh()` if `u_i > maxExcess_i` for either token. A percentage bound on the measured receipt, `u_i ≤ floor(net_i·bps_i/10,000)`, was evaluated and not adopted.
+
+| Criterion | Absolute amount (chosen) | Percentage of the measured receipt (evaluated) |
+|---|---|---|
+| Very small tolerances | expressed exactly, down to 1 unit | limited by integer bps: 1 bps = 0.01 % is the smallest non-zero step |
+| What the user knows in advance | the exact number of units that may stay unmatched | only a ratio; the allowed amount depends on the receipt, which is known only after the transfer |
+| Effort for the user | must understand the token's decimals | the same ratio reads the same for every token |
+| Change in deposit size | the user must adjust the bound | adapts automatically to the actual receipt |
+| Interface impact in M8 | none (current ABI, selector `0x7713f77f`) | new field type and selector, range check, test migration |
+
+**Worked example** [proven, integer arithmetic]: the Pool receives `net_i = 1,000,000` units of a token, and the user wants to allow at most 1 unmatched unit.
+
+| Bound | Setting | Allowed `u_i` | Allows exactly 1 unit? |
+|---|---|---|---|
+| Absolute | `maxExcess_i = 1` | 1 | yes |
+| Percentage | 0 bps | 0 | no, too strict: a deposit with `u_i = 1` reverts |
+| Percentage | 1 bps | `floor(1,000,000·1/10,000) = 100` | no, 100 times the intended tolerance |
+
+The wanted ratio is 1/1,000,000 = 0.01 bps, which is not an integer bps value. The opposite effect also exists: if the same user deposits twice as much (`net_i = 2,000,000`), the absolute bound stays at 1 unit, while 1 bps would rise to 200 units. Whether this is an advantage (the user keeps exact control) or a burden (the user must re-set the bound) depends on the user; the decision favours exact control.
+
+**Decimals.** One unit is the token's smallest unit. With 6 decimals, 1,000,000 units are 1 whole token and 1 unit is 0.000001 tokens. With 18 decimals, 1,000,000 units are only 10^−12 tokens. A UI must therefore convert a human-readable tolerance into units using the token's decimals; the Pool itself does not read decimals.
+
+**Use in the reports.** The M8 milestone report cites this decision briefly. The M11 final report uses the example above in its design trade-offs section.
