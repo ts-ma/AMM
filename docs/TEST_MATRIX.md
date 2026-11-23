@@ -692,7 +692,30 @@ Configuration verified with `forge config` immediately before measuring: `solc` 
 
 Sizes (`forge build --sizes`): `AMMPool` runtime 10,553 B / initcode 11,709 B; `AMMFactory` 12,770 B / 12,968 B (the Factory embeds the Pool's initcode).
 
-**Comparability.** The archived G05 harness (`GasM8`), run unchanged on a `git archive` copy of the final code, reproduces its own values exactly (P1 108,789, P5 231,979, deployment 2,426,562). The G02 values differ from those by harness effects only: G05 read token addresses from test storage inside the interval for the deployment (+4,165) and passed the Pool as a parameter for deposits (−25 relative to G02's local). G02 values are therefore not to be subtracted from G05 values; comparisons use one harness.
+**Comparability.** The archived G05 harness (`GasM8`), run unchanged on a `git archive` copy of the final code, reproduces its own values exactly (P1 108,789, P5 231,979, deployment 2,426,562). The G02 values differ from those by harness effects only: G05 read the token addresses from test storage inside the interval for the deployment (G05 +4,165, consistent with two cold `SLOAD`s of 2,100 each; not separately measured), and its deposit measurement differs by 25 gas (G05 108,789, G02 108,814) for harness reasons not isolated further. G02 values are therefore not to be subtracted from G05 values; comparisons use one harness.
+**Isolated variants (M10 decision 4: measured only, production adoption decided separately).** Each variant is a `git archive` copy of `a135693` in the scratchpad with only `src/AMMPool.sol` changed; the repository's `src/` was not modified. Same configuration and harness; full suite (all tests except `GasG02`, 470 tests, default fuzz runs) run on each copy.
+- **VP — packed reserves:** `reserve0` / `reserve1` as `uint112` in one storage slot; all 12 writes through OpenZeppelin `SafeCast.toUint112`, which reverts above `2^112 − 1`. This adds a new numerical boundary (Uniswap V2 style) that the approved ranges (§6.6, U6 / A4) do not have.
+- **VU — `unchecked` on proven-safe arithmetic:** 14 blocks: `gross − 1000` after its check; reserve decreases in `removeLiquidity` (`amount_i ≤ r_i`) and swap (`out < rOut`); reserve increases in swap and later deposit (`r + n ≤` Pool balance, §6.6 "Reserve updates"); `u_i` (matched amount `≤ n_i`); the guarded comparisons in BI-2′, payer debit, `skim` and `_pushMeasured`. Not changed: the inbound measurement `after − before` (its Panic is the intended reaction to an unsupported token, §6.6) and the checked `S + σ`.
+
+| Function / scenario | G02 base | VP Δ | VU Δ |
+|---|---:|---:|---:|
+| `addLiquidity` initial | 232,004 | −21,567 | −330 |
+| `addLiquidity` later, token0 cap binds | 108,814 | −4,298 | −534 |
+| `addLiquidity` later, token1 cap binds, `token1First` | 109,052 | −4,298 | −534 |
+| `removeLiquidity` partial / full exit | 94,105 / 94,144 | −4,292 | −394 |
+| `swapExactInput` token0 in / token1 in | 82,539 / 82,587 | −4,292 / −4,295 | −263 |
+| `getAmountOut` / `getReserves` | 8,474 / 7,376 | −2,056 | 0 |
+| `sync` no deficit / token0 deficit | 40,067 / 44,774 | −1,899 / −1,667 | 0 |
+| `skim` both tokens / no surplus | 101,777 / 39,905 | −1,935 | −278 / 0 |
+| LP `transfer` / `approve` / `transferFrom` | 54,879 / 49,430 / 57,659 | 0 | 0 |
+| `createPair` | 2,316,864 | +147,588 | −27,467 |
+| deployment `AMMPool` / `AMMFactory` | 2,422,397 / 2,838,448 | +159,273 / +159,279 | −29,565 / −29,578 |
+| `AMMPool` runtime / initcode size | 10,553 / 11,709 B | +736 / +736 B | −137 / −137 B |
+| Full suite (470 tests) | 470 passed | **457 passed, 13 failed** | 470 passed |
+
+VP failures, all at reserve values above `2^112` (`SafeCastOverflowedUintDowncast`, or a test that classifies reverts and does not accept that error): `test_M4H2_productAbove2pow256QuotientFits`, `test_Z06_denominatorBoundary`, `test_Z06_extremeCapCorners`, `test_Z08i_oneSideSaturates_otherFits_succeeds`, `test_Z08iv_replanSaturates_requestIsCap`, and the fuzz tests `testFuzz_F1T1_extremeRequest`, `testFuzz_Q01_quoteEqualsSwap`, `testFuzz_Q04_zeroQuoteSwapReverts`, `testFuzz_Z01_S11_S15_swapMatchesFormula`, `testFuzz_Z03_mixedDecimalsNearTop`, `testFuzz_Z06_laterDepositMatchesOracle`, `testFuzz_Z08_differentialOracle`, `testFuzz_Z09_invariants`. These are range changes, not wrong values: adopting VP would require a new approved range (U6 / A4), revised tests and a new error case.
+
+**Reading.** VP saves about 4,300 gas per add, remove and swap and about 21,600 on the initial deposit (consistent with one storage slot instead of two for the reserves; the causes were not measured separately), but costs about 159,000 once per deployment and narrows the supported reserve range to `2^112`. VU saves 263–534 per state-changing call and about 29,600 per deployment, with no test difference; its safety rests on the proofs listed above, which become load-bearing (an error in them would wrap instead of revert). The combination VP + VU was not measured. Status: measured; no variant adopted (student decision pending).
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
 Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
