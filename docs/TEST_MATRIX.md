@@ -670,3 +670,20 @@ Mutants are applied temporarily by a scratchpad script that always restores `src
 | Compiles, at least one test fails | Killed: the tests detected the behavioural error |
 | Compiles, all tests pass | Survived: a possible test gap or an equivalent mutant; must be analysed and reported |
 | Does not compile | Not compilable: does **not** count as a behavioural test success |
+
+## 16. Static analysis: `forge lint` triage (M10, 2026-11-23)
+
+Run on `src/` with forge 1.9.0 (`forge lint src`, and once per severity with `--severity high|med|low|info|gas|code-size`). No `[lint]` section in `foundry.toml`, so the defaults apply. Each finding was reviewed by hand; none changes code. Tools **not** run: slither, aderyn, mythril, halmos (not installed), Echidna / Medusa, formal verification (student decision 5, 2026-11-23).
+
+| Severity | Lint | Location | Verdict | Reason / evidence |
+|---|---|---|---|---|
+| high | — | — | none reported | — |
+| med | `uninitialized-local` | `AMMPool.sol:482` (`_pullLater`, `target1`) | False positive | `target1` is assigned on the `hi == 0` and `0 < hi < r0` paths; on the `hi ≥ r0` path it is unassigned but the `||` short-circuits on `hi >= r0` and the branch then assigns it before any use (Solidity also zero-initialises locals, so there is no undefined value). Step-2 results are checked against the reference formula by the Z06 differential and the M4H-2 tests |
+| low | `block-timestamp` (3) | `addLiquidity`, `removeLiquidity`, `swapExactInput` deadline checks | Accepted | A deadline bounds staleness, not exact timing; a producer can shift the timestamp by seconds (THREAT_MODEL §6 item 6) |
+| low | `reentrancy-events` (4) | `LiquidityAdded`, `LiquidityRemoved`, `Swap` after the token calls; `PairCreated` after `new AMMPool` | Accepted | The Pool must measure balances first; all three Pool functions are `nonReentrant` (THREAT_MODEL §6 item 9; reentrancy tests X01, X02, X05, W07). The Factory's only external code is the Pool constructor, which calls nothing (DECISIONS M7-4) |
+| info | `screaming-snake-case-immutable` (4) | `token0`, `token1`, `surplusRecipient` (Pool), `surplusRecipient` (Factory) | Kept | Public getter names are part of the approved ABI (V2-style names); renaming would change the interface |
+| info | `internal-function-used-once` (1) | `AMMMath.initialShares` | Kept | Library helper named after ARCHITECTURE §6.1 and tested directly in the maths-library tests |
+| info | `pragma-inconsistent` (1) | `src/Counter.sol` (`^0.8.13`) vs `0.8.38` elsewhere | Open decision | The Foundry template is kept by an approved workflow decision (DECISIONS §6, "Counter template: keep for now"). Removing it from `src/`, `test/` and `script/` before submission needs the student's decision |
+| gas, code-size | — | — | none reported | — |
+
+Test code: `forge lint` over the whole project adds 59 `environment-read-across-mutation` notes in tests (`block.timestamp` reused across `vm.revertToState` / `vm.warp`). They concern test code only (no production contract is affected); they were not reviewed one by one. Not changed.
