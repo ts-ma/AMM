@@ -718,6 +718,53 @@ Sizes (`forge build --sizes`): `AMMPool` runtime 10,553 B / initcode 11,709 B; `
 VP failures, all at reserve values above `2^112` (`SafeCastOverflowedUintDowncast`, or a test that classifies reverts and does not accept that error): `test_M4H2_productAbove2pow256QuotientFits`, `test_Z06_denominatorBoundary`, `test_Z06_extremeCapCorners`, `test_Z08i_oneSideSaturates_otherFits_succeeds`, `test_Z08iv_replanSaturates_requestIsCap`, and the fuzz tests `testFuzz_F1T1_extremeRequest`, `testFuzz_Q01_quoteEqualsSwap`, `testFuzz_Q04_zeroQuoteSwapReverts`, `testFuzz_Z01_S11_S15_swapMatchesFormula`, `testFuzz_Z03_mixedDecimalsNearTop`, `testFuzz_Z06_laterDepositMatchesOracle`, `testFuzz_Z08_differentialOracle`, `testFuzz_Z09_invariants`. These are range changes, not wrong values: adopting VP would require a new approved range (U6 / A4), revised tests and a new error case.
 
 **Reading.** VP saves about 4,300 gas per add, remove and swap and about 21,600 on the initial deposit (consistent with one storage slot instead of two for the reserves; the causes were not measured separately), but costs about 159,000 once per deployment and narrows the supported reserve range to `2^112`. VU saves 263–534 per state-changing call and about 29,600 per deployment, with no test difference; its safety rests on the proofs listed above, which become load-bearing (an error in them would wrap instead of revert). The combination VP + VU was not measured. Status: measured; **neither VP nor VU adopted** (student, 2026-11-23, DECISIONS M10-4).
+### 14.7 M11 architecture gas review (2026-11-23; review and isolated experiments only, no production change)
+
+**Baseline:** `m11-report` at `a85cd8d` (`src/` logic identical to `550bc80`). **Experiments:** local branch `m11-gas-exp` (worktree in the scratchpad, not merged): `01321dc` candidate A, next commit candidate B micro-benchmark. Same toolchain and configuration as §14.6 (`forge config` checked); harness `GasM11` uses the G05/G02 method (one call, `gasleft()` around it, `isolate = true`, Pools seeded (1000e18, 2000e18), alice payer and recipient). Baseline values were measured on a `git archive` copy of `a85cd8d` with the same harness. Separate from the M11 final regression (§10.6 of the report).
+
+**Where the gas goes (traces of the G02 calls, `forge test -vvvv`).**
+- `createPair` 2,313,872 inside the call, of which `new AMMPool` 2,159,325 (93 %); the registry writes and event are the rest.
+- Later deposit (ordinary tokens): 14 `balanceOf` calls (4 cold at 2,559 gas, 10 warm at 559: ≈ 15,800) and 2 `transferFrom` (11,320 each).
+- Swap: 8 `balanceOf` (3 cold, 5 warm), 1 `transferFrom` (13,320), 1 `transfer` (8,881). Remove: 10 `balanceOf` (4 cold, 6 warm), 2 `transfer`. Initial deposit: 12 `balanceOf` and 2 first-time `transferFrom` (28,420 each, zero-to-non-zero Pool balances).
+
+**The 14 balance readings of a later deposit (object, time, protection).** Identical for ordinary and L46-style taxed tokens: the tax changes the token's own cost and the excess, not the number of readings; a re-plan adds none.
+
+| # | Object | Time | Protection |
+|---|---|---|---|
+| 1–2 | Pool, both tokens | entry (`_checkNoDeficit`) | deficit block (M6-2) |
+| 3–4 | Pool, both tokens | start snapshot | BI-2′ baseline (M8-11) |
+| 5–6 | payer, both tokens | start snapshot | `maxDebit` baseline (M8-3) |
+| 7–8 | Pool, first token | around its `transferFrom` | measured receipt `n_f` |
+| 9–10 | Pool, second token | around its `transferFrom` | measured receipt `n_s` |
+| 11–12 | Pool, both tokens | after the last transfer | BI-2′ end |
+| 13–14 | payer, both tokens | after the last transfer | `maxDebit` end |
+
+Earlier reuse variants (§14.5) target readings 1–4 (VC), 3 with 7 (VB) and 9/10 with 11/12 (VA); they are not re-evaluated here (no new architectural reason).
+
+**Candidate A — skip the payer readings when `maxDebit_i = type(uint256).max` (measured).** With an unbounded `maxDebit_i` the comparison `debit > maxDebit_i` can never be true, so readings 5/13 (token0) and 6/14 (token1) are skipped per token.
+
+| Later deposit (harness `GasM11`) | Baseline | Candidate A | Δ |
+|---|---:|---:|---:|
+| ordinary tokens, `maxDebit` MAX (G05 P1 conditions) | 108,789 | 104,943 | **−3,846** |
+| ordinary tokens, `maxDebit` finite | 108,165 | 108,292 | +127 |
+| token1 10 % tax pulled second, `maxDebit` MAX | 177,899 | 173,917 | **−3,982** |
+| token1 10 % tax pulled second, `maxDebit` finite | 177,275 | 177,402 | +127 |
+| token1 10 % tax pulled first (re-plan), `maxDebit` MAX | 178,301 | 174,319 | **−3,982** |
+| swap / remove (control) | 82,510 / 94,076 | 82,510 / 94,076 | 0 |
+
+- Full suite on the variant (all tests except the gas harnesses): 472 / 472 passed.
+- Who pays: callers with a finite `maxDebit` pay +127; callers with an unbounded `maxDebit` save ≈ 3.5 % (ordinary) or ≈ 2.2 % (taxed). Deployment size changes slightly (not separately measured).
+- Behaviour: identical for every token whose `balanceOf(payer)` succeeds: payer debit (the bound is vacuous at MAX), Pool receipt, `maxExcess`, BI-2′ and reentrancy protection are unchanged; token support is unchanged. One difference: an unsupported token whose `balanceOf(payer)` reverts no longer makes a MAX-bounded deposit revert at the snapshot. No existing test distinguishes the two.
+- Why it is safe for ordinary tokens [source]: for Tier 0 the payer's debit equals the amount requested, which is already bounded by `RequestMax_i`; `maxDebit` adds protection only for tokens with extra sender-side charges, where a caller should keep it finite.
+- Needs a student decision: it changes the implementation of the approved M8-3 rule ("snapshot the payer always") to "snapshot the payer only when the bound can bind"; ABI unchanged. Recommendation: **adopt** if a per-call saving of ≈ 3.8–4.0k for the default setting is wanted; otherwise keep.
+
+**Candidate B — shared implementation via ERC-1167 clones with immutable args (partly measured, partly estimated).** The Factory would deploy one implementation and, per pair, a clone carrying `(token0, token1, surplusRecipient)` in its code.
+- Measured micro-benchmark (`GasM11Clone`): reading three addresses through a clone (DELEGATECALL + `Clones.fetchCloneArgs`) costs 9,143 vs 3,067 with immutables in a directly deployed contract: **+6,076 per call**. Creating a clone with three address arguments: **115,240**.
+- Estimate (not measured on a full Pool): per pair, creation falls from 2,159,325 (the `new AMMPool` part of `createPair`) to ≈ 115,240, saving ≈ 2.04M once; every later Pool call (add, remove, swap, `sync`, `skim`, and LP `transfer` / `approve` / `transferFrom`) costs ≈ +6,100 or more (more if the arguments are fetched more than once per call). Break-even ≈ 2,044,085 / 6,076 ≈ 336 calls per pair; one implementation deployment (≈ 2.4M) is paid once and needs at least two pairs to be recovered. Assumptions: one argument fetch per call, the same cold/warm conditions as G02.
+- Behavioural and architectural differences: constructor checks (sorting, `surplusRecipient` rules) move to the Factory; the LP `name`/`symbol` must be constants (OpenZeppelin `ERC20` stores them in the implementation's storage); Pools could no longer be deployed directly (most unit suites deploy them directly); the implementation must be unusable on its own; ownerless and immutable properties remain (no initializer is needed with immutable args). ABI of the Pool unchanged except possibly a guard; `AMMFactory` changes.
+- Recommendation: **keep the current full-Pool deployment.** The saving is paid once per pair, while every user of every pool pays ≈ +6k per call forever (≈ +5.6 % on a later deposit, +7.4 % on a swap); an exchange's busy pools dominate total cost.
+
+**VP / VU / VA–VC:** cited from §14.5 and §14.6; no new architectural reason found to re-open them (VU stays not adopted, student decision).
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
 Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
