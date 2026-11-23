@@ -230,7 +230,7 @@ Unit tests use exact values from independent models; fuzz tests cover the docume
 
 ### 10.6 Final regression
 
-To be recorded at delivery (commit, command, tests, suites).
+Commit `b80c5a8` (`src/` logic identical to the M8 acceptance `550bc80`: bytecode built without CBOR metadata is unchanged). Commands: `forge build`; `forge test`; `FOUNDRY_FUZZ_RUNS=10000 forge test`. Result: **491 tests in 55 suites passed, 0 failed**, in both runs (invariant suites use their inline 256 × 500 setting). Configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`; forge 1.9.0.
 
 ## 11. Gas
 
