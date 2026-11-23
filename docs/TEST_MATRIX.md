@@ -1,6 +1,6 @@
 # TEST MATRIX — Foundry Test Plan
 
-**Last updated:** 2026-11-21
+**Last updated:** 2026-11-23
 
 **Status:** Rows marked `PASSED` (M1–M6) are implemented and were run. Everything else is a plan, not a record of passing tests. "Maths level" means the library function was tested; the Pool function that uses it does not exist yet. Record a result and the test function name only after the test has actually been run.
 
@@ -469,7 +469,7 @@ If any setting changes, earlier measurements are not comparable with later ones;
 | G01 | `swapExactInput` gas with and without the on-chain §6.5 assertion | Input to the A9 decision | M5 | Measured 2026-11-19 (§14.2); A9 decided: tests only (DECISIONS M5-9) |
 | G03 | Cost of the M6 deficit entry check; M6-3 snapshot-reuse variant B vs. A | Input to the B decision (DECISIONS M6-3) | M6 | Measured 2026-11-19 (§14.3); B not adopted (DECISIONS M6-8) |
 | G04 | `createPair` gas (one measurement, configuration recorded) | Report only; no optimisation (DECISIONS M7-7) | M7 | Measured 2026-11-20 (§14.4) |
-| G05 | M8 `addLiquidity` paths vs. the G03 baseline; balance-reading reuse variants VA / VB / VC | Input to the optimisation decision and to R7 (DECISIONS M8-9) | M8 | Measured 2026-11-22 (§14.5); no variant adopted yet |
+| G05 | M8 `addLiquidity` paths vs. the G03 baseline; balance-reading reuse variants VA / VB / VC | Input to the optimisation decision and to R7 (DECISIONS M8-9) | M8 | Measured 2026-11-22 (§14.5); current implementation kept, VA / VB / VC recorded as evaluated candidates (2026-11-23); R7 event variants measured, option A chosen (M8-9) |
 | G02 | Gas snapshot of all public functions | Report and later optimisation baseline | M10 | `NOT IMPLEMENTED` |
 
 ### 14.1 M4 hardening measurements (2026-11-19)
@@ -612,7 +612,26 @@ The G03 value 98,525 reproduces exactly on both `m6-sync-skim-accepted` and `m7-
 - VA and VC change the M8-11 implementation note (end reading taken separately; deficit-check reading kept separate). Adopting any variant needs the student's decision.
 - The combination of VA + VB + VC was **not** measured. Its saving is an estimate only: about the sum, roughly 3,300 on P1.
 
-Status: measured; no variant adopted (decision pending). The cost of an R7 event was not measured here (M8-9). These are single-scenario measurements, not a full gas snapshot (G02, M10).
+Status: measured. **Decision (student, 2026-11-23):**
+- the current implementation is kept, and VA, VB and VC are recorded as evaluated optimisation candidates;
+- the VC saving and its error-order difference are kept for the report;
+- the about-3,300 combination is an unverified estimate;
+- VW shows only that the existing tests caught this one incorrect reuse.
+
+**R7 event variants (2026-11-23, same harness, configuration and method as above; temporary copies of `8f294b9`, now `feaf76b` with identical `src/`):**
+
+| Variant | P1 | Δ P1 | P5 initial | Δ P5 | P7 / P8 | Deployment | Runtime | Tests |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| A — current `LiquidityAdded` | 108,789 | — | 231,979 | — | 178,280 / 177,899 | 2,426,562 | 10,553 B | 406/406 |
+| E2 — plus `DepositAccounting(payer, debit0, debit1, excess0, excess1)` | 111,308 | +2,519 | 234,440 | +2,461 | 180,799 / 180,418 | 2,463,830 | 10,725 B | 407/407 (406 + worked example asserting both events) |
+| E3 — `LiquidityAdded` extended to 9 fields | 110,194 | +1,405 | 233,326 | +1,347 | 179,685 / 179,304 | 2,457,351 | 10,695 B | event signature changed: 3 test files (9 references) do not compile |
+
+Worked example used for E2, on the real Pool:
+- start: reserves (10,000, 20,000), S = 14,142; token1 has a 10% inclusive tax;
+- request (1,000, MAX), token0 first;
+- payer debit (1,000, 2,000); net (1,000, 1,800); σ = 1,272; excess (100, 1).
+
+Decision: option A (DECISIONS M8-9). These are single-scenario measurements, not a full gas snapshot (G02, M10).
 
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 

@@ -1,6 +1,6 @@
 # ARCHITECTURE — AMM Specification (Pre-Implementation)
 
-**Last updated:** 2026-11-22
+**Last updated:** 2026-11-23
 
 **Status:** Target architecture, partly implemented (M2–M7 accepted; M8 implemented on branch `m8-measured-deposit`, WIP until accepted). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
@@ -500,7 +500,26 @@ Typed events for: pair creation, liquidity added, liquidity removed, swap, defic
   - `net_i` is **not** the payer's debit, which can differ and is bounded only by `maxDebit_i`.
   - `net_i` is **not** the Pool's whole-call balance change either. That change is larger if someone else sends token i to the Pool during the call, and such an arrival stays surplus (BI-2′).
   - `shares` excludes the 1,000 lock on the initial deposit.
-  - Whether to add an event for the payer debit and the excess is decided after G05 (M8-9 / R7, `PENDING`).
+  - **No event for the payer debit or the excess** (DECISIONS M8-9, option A, 2026-11-23).
+  - **`debit_i` (not emitted).**
+    - The Pool measures it as `msg.sender`'s net balance decrease of token i over the whole call window: from the snapshot after the pre-transfer checks to the reading after the last token call.
+    - A balance that rose counts as 0.
+    - A successful `addLiquidity` shows only that `debit_i ≤ maxDebit_i` passed. The actual value cannot be verified from this event.
+    - With a router, the router is the payer.
+  - **Excess of a later deposit.** Reconstruct it as `u_i = net_i − ⌈shares × r_i / S⌉`.
+    - `r_i` and `S` are the recorded reserve and LP `totalSupply` **before this deposit**.
+    - They can be reconstructed exactly from the Pool's own complete log:
+      - reserves from `LiquidityAdded` (`+net_i`), `LiquidityRemoved` (`−amount_i`), `Swap` (`+amountIn` / `−amountOut`) and `ReserveSynced` (`newReserve`);
+      - `S` from the Pool's LP `Transfer` events (mint from `address(0)`, burn to `address(0)`).
+    - Snapshots taken at block granularity are not reliable, because earlier transactions in the same block change the state.
+  - **Log order inside one `addLiquidity` call.**
+    - The LP mint `Transfer` of this call is logged **before** `LiquidityAdded`, after the token contracts' own transfer logs.
+    - So an indexer that applies events in log order has already added `shares` to `S` when it reaches `LiquidityAdded`. It must use `S − shares`, or process the call as one unit.
+    - No other Pool log can appear inside the call (`nonReentrant`).
+  - **Initial deposit (`S = 0` before the call)** is a separate case:
+    - two mints are logged first: 1,000 to the Pool (the lock), then `shares` to the recipient;
+    - `r_i = 0` and `S = 0`, so the formula does not apply;
+    - the excess is 0 by definition (M8-13 (c)), and `shares = ⌊√(net0·net1)⌋ − 1000`.
 - `LiquidityRemoved(address indexed sender, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1)` — `APPROVED` (M4-3); amounts are the Pool-side reserve decreases. The recipient's actual receipt is the function's return value; MIN-NET is enforced on-chain from balance snapshots, not from events.
 - `ReserveSynced(address indexed token, uint256 previousReserve, uint256 newReserve)` — `APPROVED` (M6-4); one per lowered token, only when a reserve actually changes; the LP loss is `previousReserve − newReserve`.
 - `SurplusSkimmed(address indexed token, uint256 amount)` — `APPROVED` (M6-4); one per token with surplus; `amount` is the Pool-side decrease (A8); the recipient is always `surplusRecipient`.
