@@ -11,10 +11,10 @@ import {MockFailingERC20} from "./mocks/MockFailingERC20.sol";
 import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
-/// @notice M8 measured-net deposit, tests shipped with M8 commit 2 (WORK IN PROGRESS: maxDebit
-///         and BI-2′ follow in commits 3 and 4). TEST_MATRIX L30 (interface), L42 (re-planned
+/// @notice M8 measured-net deposit, tests shipped with M8 commit 2 (maxDebit
+///         and BI-2′ followed in commits 3 and 4). TEST_MATRIX L30 (interface), L42 (re-planned
 ///         zero target), L43 (canonical token order). Further M8 rows (L31–L41, Z08, Z09, …)
-///         follow in later commits.
+///         are in later commits.
 contract AMMPoolMeasuredDepositTest is Test {
     uint256 internal constant MAX = type(uint256).max;
     uint256 internal constant FUND = 1e30;

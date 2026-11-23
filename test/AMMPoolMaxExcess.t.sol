@@ -8,7 +8,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFeeERC20} from "./mocks/MockFeeERC20.sol";
 import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
-/// @notice M8 commit 5b (tests only; M8 remains WIP): the maxExcess bound (DECISIONS M8-2).
+/// @notice M8 commit 5b (tests only): the maxExcess bound (DECISIONS M8-2).
 ///         TEST_MATRIX L36. The expected unmatched amount u_i = n_i − ceil(σ·r_i/S) is computed
 ///         here from the pre-deposit state and the returned nets with plain integer arithmetic;
 ///         the Pool's own result is then checked at the boundary: maxExcess = u succeeds,

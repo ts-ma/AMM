@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-11-23
 
-**Status:** Target architecture, partly implemented (M2–M7 accepted; M8 implemented and tested on branch `m8-measured-deposit`, awaiting the student's acceptance). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
+**Status:** Target architecture, partly implemented (M2–M7 accepted; M8 accepted 2026-11-23). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 
 Status labels are defined in [DECISIONS.md](DECISIONS.md) §0; DECISIONS.md is authoritative for status. Anything `PROPOSED` or `PENDING` needs student approval before implementation.
 
@@ -118,7 +118,7 @@ Uniswap V2's unconditional `reserve := balance` is not used: it would silently a
 |---|---|---|---|
 | BI-1 | After every successful call, `balance_i ≥ reserve_i` for both tokens (supported tokens). | Construction of §5.2 + BI-2/BI-5 | I2 |
 | BI-2 | (Restated 2026-11-21; original wording and reason in DECISIONS ADR-025.) `addLiquidity`, `removeLiquidity` and `swapExactInput` change each reserve only by the measured Pool-side change of their **own** transfers, each measured from a fresh snapshot (M6-8); surplus present before the call is never credited to the caller, and a transfer made by someone else during the call stays surplus (B08). **Not claimed:** that surplus is unchanged by foreign in-call transfers. | Construction of §5.2 (M5/M6) | B01–B03, B08 |
-| BI-2′ | **`addLiquidity` only, initial and later deposit (M8, implemented in commit 4; awaiting M8 acceptance):** under truthful asset measurement, per token, the Pool's whole-call net balance increase `B_i^end − B_i^start` (start: before the first transfer; end: after the last external call) is compared with `n_i`, the net measured inside that token's own transfer window; a successful deposit requires `B_i^end ≥ B_i^start` and `B_i^end − B_i^start ≥ n_i` for both tokens and credits to reserves only `n_i`. With `reserve_i += n_i` this is `surplus_end ≥ surplus_start`; any other arrival stays surplus. Option X1 only (`reserve_i += n_i`). Not a property of `swapExactInput` / `removeLiquidity` (THREAT_MODEL T30) and not a guarantee about ERC-20 tokens in general. | On-chain: `B_i^end ≥ B_i^start && B_i^end − B_i^start ≥ n_i`, else `InCallBalanceLoss()` (DECISIONS M8-11) | B09a–B09e, L40 (TEST_MATRIX §3.2) |
+| BI-2′ | **`addLiquidity` only, initial and later deposit (M8, implemented in commit 4; accepted with M8):** under truthful asset measurement, per token, the Pool's whole-call net balance increase `B_i^end − B_i^start` (start: before the first transfer; end: after the last external call) is compared with `n_i`, the net measured inside that token's own transfer window; a successful deposit requires `B_i^end ≥ B_i^start` and `B_i^end − B_i^start ≥ n_i` for both tokens and credits to reserves only `n_i`. With `reserve_i += n_i` this is `surplus_end ≥ surplus_start`; any other arrival stays surplus. Option X1 only (`reserve_i += n_i`). Not a property of `swapExactInput` / `removeLiquidity` (THREAT_MODEL T30) and not a guarantee about ERC-20 tokens in general. | On-chain: `B_i^end ≥ B_i^start && B_i^end − B_i^start ≥ n_i`, else `InCallBalanceLoss()` (DECISIONS M8-11) | B09a–B09e, L40 (TEST_MATRIX §3.2) |
 | BI-3 | `skim()` leaves reserves unchanged and, for every token that had surplus, leaves `balance_i == reserve_i`. | §7.8 | B04, R03 |
 | BI-4 | `sync()` never increases a reserve; afterwards `reserve_i = min(old reserve_i, balance_i)`; balances unchanged. | §7.7 | B05, R05 |
 | BI-5 | Every Pool outbound transfer of `x` lowers the Pool's own balance by exactly `x`; otherwise the call reverts. | On-chain check (A8) | B06, X04 |
@@ -307,7 +307,7 @@ Signatures, event names and custom-error names are `PROPOSED` until the relevant
 
 ### 7.2 `addLiquidity(IAMMPool.AddLiquidityParams calldata p) → (net0, net1, shares)`
 
-Measured-net deposit, P1+ with X1 (DECISIONS M8-1 to M8-13; implemented in M8 commits 2–4, tested in commits 5a–5f and the F1 follow-up tests (TEST_MATRIX §3.4); awaiting acceptance). Fields and selector: DECISIONS M8-8. `S` = LP `totalSupply()`, `r_i` = recorded reserves, `n_i` = measured net.
+Measured-net deposit, P1+ with X1 (DECISIONS M8-1 to M8-13; implemented in M8 commits 2–4, tested in commits 5a–5f and the F1 follow-up tests (TEST_MATRIX §3.4); M8 accepted 2026-11-23). Fields and selector: DECISIONS M8-8. `S` = LP `totalSupply()`, `r_i` = recorded reserves, `n_i` = measured net.
 
 1. `nonReentrant`.
 2. **Checks, in this order, before any transfer.**

@@ -10,7 +10,7 @@ import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {Wide512} from "./utils/Wide512.sol";
 import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
-/// @notice M8 commit 5c (tests only; M8 remains WIP). TEST_MATRIX Z08 (i), (ii)/(iii), (iii-b) and
+/// @notice M8 commit 5c (tests only). TEST_MATRIX Z08 (i), (ii)/(iii), (iii-b) and
 ///         the 512-bit differential oracle; Z09 invariant fuzz.
 ///         The oracle is independent of the Pool and of OpenZeppelin: exact 512-bit products and
 ///         bitwise long division; it replays the documented M8 later-deposit algorithm (step 2 →

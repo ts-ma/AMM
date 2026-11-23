@@ -15,8 +15,7 @@ import {IAMMPool} from "./interfaces/IAMMPool.sol";
 ///      controls and the initial deposit with the permanent 1,000-unit lock (M3), Tier 0 later
 ///      deposits and proportional withdrawal (M4), exact-input swap (M5), downward-only sync,
 ///      per-token skim, deficit entry checks and terminal-pool rules (M6), measured-net
-///      deposit with a struct ABI, payer-debit bound and in-call balance rule BI-2′ (M8, WORK IN
-///      PROGRESS until the M8 acceptance; not for deployment).
+///      deposit with a struct ABI, payer-debit bound and in-call balance rule BI-2′ (M8).
 ///      add, remove and swap revert on a deficit (balance < reserve; U4, DECISIONS M6-2).
 ///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.4, §7.1–§7.9.
 contract AMMPool is ERC20, ReentrancyGuardTransient {

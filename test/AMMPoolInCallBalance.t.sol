@@ -10,7 +10,7 @@ import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
-/// @notice M8 commit 4 (WORK IN PROGRESS until M8 acceptance): in-call balance rule BI-2′ for
+/// @notice M8 commit 4: in-call balance rule BI-2′ for
 ///         `addLiquidity` (DECISIONS M8-11, X1; ARCHITECTURE §5.5). TEST_MATRIX B09 and the
 ///         InCallBalanceLoss part of L40. Hook token H (`ReentrantERC20`) calls the victim token
 ///         V (`MockDeficitERC20`) during H's own `transferFrom`: `slash(pool, x)` removes Pool

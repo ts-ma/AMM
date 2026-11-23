@@ -290,7 +290,7 @@ M6 accepted 2026-11-19 (tag `m6-sync-skim-accepted`, merged to `main`).
 
 M7 accepted 2026-11-20 (tag `m7-factory-accepted` on `26ac725`, merged to `main`); the extra `test` commit `a70c42a` was accepted as part of M7-8.
 
-## 15. M8 decisions (approved 2026-11-21 to 2026-11-23; implemented and tested; awaiting M8 acceptance)
+## 15. M8 decisions (approved 2026-11-21 to 2026-11-23; implemented and tested; M8 accepted 2026-11-23)
 
 M8 is repositioned from a known-tax exact-gross algorithm (L-α) to a **tax-hint-independent, measured-net deposit**. The student's goal: a general-purpose AMM for real users. Unknown, random and dynamically changing taxes, tokens without a tax getter, and extra sender-side debits are compatibility goals where economically safe; safety, correct accounting, user protection and the ability to exit take priority over transaction success. Tax hints may exist in a UI for quotation only; the Pool must not need them for correct settlement. The full revision of D2, D6, U8, U9, U10, M3-4, M4-1/M4-2, ADR-015 and ARCHITECTURE / TEST_MATRIX follows in the M8 decisions commit, now that the ABI (M8-8, M8-13) is approved.
 

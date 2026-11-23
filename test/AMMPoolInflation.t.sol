@@ -8,7 +8,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFeeERC20} from "./mocks/MockFeeERC20.sol";
 import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
-/// @notice M8 commit 5d (tests only; M8 remains WIP): L13b, redefined at the student's request.
+/// @notice M8 commit 5d (tests only): L13b, redefined at the student's request.
 ///         The question is measured, not assumed: what is the attacker's REAL profit and loss
 ///         (tokens received minus tokens paid, both tokens valued 1:1) in each scenario?
 ///

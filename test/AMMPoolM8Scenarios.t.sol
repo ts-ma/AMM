@@ -10,7 +10,7 @@ import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
-/// @notice M8 commit 5e (tests only; M8 remains WIP). TEST_MATRIX L31 (taxed first token,
+/// @notice M8 commit 5e (tests only). TEST_MATRIX L31 (taxed first token,
 ///         re-plan; the REPORT_NOTES §1.5 worked numbers), L33 (both taxed, each pull order),
 ///         L34 (pull-order comparison), L35 (second net 0), L39 (request cap is not a promise),
 ///         L40 (full error chain with several simultaneous failures), L41 (JIT capture).

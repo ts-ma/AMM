@@ -11,7 +11,7 @@ import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
-/// @notice M8 commit 3 (WORK IN PROGRESS; BI-2′ follows in commit 4): whole-call payer-debit
+/// @notice M8 commit 3 (BI-2′ followed in commit 4): whole-call payer-debit
 ///         bound `maxDebit` (DECISIONS M8-3). TEST_MATRIX L37 (boundaries, inclusive/exclusive
 ///         fees), L38 (cross-token hook, both directions), L40 (check order, PayerDebitTooHigh
 ///         part), Z09-style seeded random tax. Every revert asserts the exact error and full

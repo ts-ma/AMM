@@ -9,7 +9,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFeeERC20} from "./mocks/MockFeeERC20.sol";
 import {addParams, addParamsOrdered} from "./utils/AddParams.sol";
 
-/// @notice M8 commit 5 (tests only; M8 remains WIP): the re-plan of the second token
+/// @notice M8 commit 5 (tests only): the re-plan of the second token
 ///         (DECISIONS M8-12) and the request cap (M8-13 (a)). TEST_MATRIX L32 (bonus first token:
 ///         upward re-plan capped by RequestMax), Z08 (iv) (re-plan saturation), and the bonus-second
 ///         case. Expected values are computed here from the documented formulas with plain

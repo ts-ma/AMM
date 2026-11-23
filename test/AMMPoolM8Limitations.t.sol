@@ -10,7 +10,7 @@ import {MockDeficitERC20} from "./mocks/MockDeficitERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {addParams} from "./utils/AddParams.sol";
 
-/// @notice M8 commit 5f (tests only; M8 remains WIP). LIMITATION TESTS: they record behaviour
+/// @notice M8 commit 5f (tests only). LIMITATION TESTS: they record behaviour
 ///         OUTSIDE the supported token model or outside BI-2′'s scope, so that the documented
 ///         limits (THREAT_MODEL T27, T30, §7.4–§7.6) are executed facts. Nothing here is
 ///         "supported": a passing test means "the limitation is exactly as documented".
