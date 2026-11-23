@@ -525,7 +525,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      The reserves read here equal those `_pullLater` used: nothing can write them in
     ///      between (`nonReentrant`; no other writer runs inside this call).
     /// @param supply LP totalSupply before this deposit (> 0).
-    /// @custom:report docs/REPORT.md §5.2 stages ⑤–⑧, §5.3 step 6, §5.7
+    /// @custom:report docs/REPORT.md §5.2 stages ⑤–⑨, §5.3 step 6, §5.7
     function _mintLater(IAMMPool.AddLiquidityParams calldata p, uint256 supply, uint256 net0, uint256 net1)
         private
         returns (uint256 shares)
