@@ -444,6 +444,8 @@ The V2 split keeps the core minimal and cheap and leaves user protection to a pe
 
 ### 13.2 Code → report index
 
+Each declaration below carries a NatSpec tag `@custom:report docs/REPORT.md §…` that points back to these sections.
+
 | Code | Report |
 |---|---|
 | `AMMMath.getAmountOut`, `AMMPool.getAmountOut` | §2.2, §2.4 |

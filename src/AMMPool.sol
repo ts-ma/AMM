@@ -18,6 +18,7 @@ import {IAMMPool} from "./interfaces/IAMMPool.sol";
 ///      deposit with a struct ABI, payer-debit bound and in-call balance rule BI-2′ (M8).
 ///      add, remove and swap revert on a deficit (balance < reserve; U4, DECISIONS M6-2).
 ///      Specification: docs/ARCHITECTURE.md §4, §5, §6.1–§6.4, §7.1–§7.9.
+/// @custom:report docs/REPORT.md §3, §4.2, §4.4 (overview); §13.2 (index)
 contract AMMPool is ERC20, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
@@ -198,6 +199,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @return net0 Measured token0 received by the Pool (token0, whatever the pull order).
     /// @return net1 Measured token1 received by the Pool.
     /// @return shares LP shares minted to `p.recipient`.
+    /// @custom:report docs/REPORT.md §5 (deposit; worked example §5.2, protections §5.4)
     function addLiquidity(IAMMPool.AddLiquidityParams calldata p)
         external
         nonReentrant
@@ -285,6 +287,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @param deadline Last valid `block.timestamp` (inclusive).
     /// @return net0 Measured token0 increase of `recipient`.
     /// @return net1 Measured token1 increase of `recipient`.
+    /// @custom:report docs/REPORT.md §6.1, §6.2, §6.3
     function removeLiquidity(uint256 shares, uint256 min0Net, uint256 min1Net, address recipient, uint256 deadline)
         external
         nonReentrant
@@ -341,6 +344,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @param recipient Receiver of the output token; not address(0) or this Pool (U7).
     /// @param deadline Last valid `block.timestamp` (inclusive).
     /// @return netOut Measured output-token increase of `recipient`.
+    /// @custom:report docs/REPORT.md §2.2, §7
     function swapExactInput(
         address tokenIn,
         uint256 amountIn,
@@ -392,6 +396,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      No transfer, so no callback point; `nonReentrant` stops it running inside another
     ///      Pool call (e.g. from a token hook) where the reserves are mid-update.
     ///      No change → no write and no event (U5).
+    /// @custom:report docs/REPORT.md §8.2
     function sync() external nonReentrant {
         _syncToken(token0, true);
         _syncToken(token1, false);
@@ -410,6 +415,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      Effects-free before the transfer (reserves are only read), and `nonReentrant`
     ///      blocks a token callback from re-entering any state-changing function.
     ///      No surplus → no transfer, no write, no event (U5).
+    /// @custom:report docs/REPORT.md §8.1, §8.3
     function skim() external nonReentrant {
         _skimToken(token0, reserve0);
         _skimToken(token1, reserve1);
@@ -431,6 +437,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @param tokenIn Token to sell; must be token0 or token1.
     /// @param amountIn Net input amount the Pool would receive.
     /// @return amountOut Output the Pool would send: floor(a·9970·rOut / (rIn·10000 + a·9970)).
+    /// @custom:report docs/REPORT.md §2.4
     function getAmountOut(address tokenIn, uint256 amountIn) external view returns (uint256 amountOut) {
         (, uint256 rIn, uint256 rOut) = _swapReserves(tokenIn);
         amountOut = AMMMath.getAmountOut(amountIn, rIn, rOut);
@@ -442,6 +449,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///         variables (DECISIONS M2-6r).
     /// @return reserve0_ Recorded reserve of token0.
     /// @return reserve1_ Recorded reserve of token1.
+    /// @custom:report docs/REPORT.md §4.4
     function getReserves() external view returns (uint256 reserve0_, uint256 reserve1_) {
         return (reserve0, reserve1);
     }
@@ -459,6 +467,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///         T_s == 0 reverts before the second transfer (no zero-amount transfer).
     ///      4. Pull the second token and measure n_s.
     ///      Reserves are > 0 here: `addLiquidity` rejects a terminal pool (M6-1) before calling.
+    /// @custom:report docs/REPORT.md §5.3 steps 3–4
     function _pullLater(IAMMPool.AddLiquidityParams calldata p) private returns (uint256 net0, uint256 net1) {
         uint256 r0 = reserve0;
         uint256 r1 = reserve1;
@@ -516,6 +525,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      The reserves read here equal those `_pullLater` used: nothing can write them in
     ///      between (`nonReentrant`; no other writer runs inside this call).
     /// @param supply LP totalSupply before this deposit (> 0).
+    /// @custom:report docs/REPORT.md §5.2 stages ⑤–⑧, §5.3 step 6, §5.7
     function _mintLater(IAMMPool.AddLiquidityParams calldata p, uint256 supply, uint256 net0, uint256 net1)
         private
         returns (uint256 shares)
@@ -551,6 +561,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      transfer, so a foreign in-call gift passes (surplus rises) and any foreign in-call
     ///      removal fails, whether or not it creates a deficit. Token0 is checked first.
     ///      Trust assumption: `balanceOf` is truthful (ARCHITECTURE §3).
+    /// @custom:report docs/REPORT.md §5.3 step 5, §5.4 (BI-2′)
     function _checkInCallBalance(uint256 start0, uint256 start1, uint256 net0, uint256 net1) private view {
         uint256 end0 = IERC20(token0).balanceOf(address(this));
         if (end0 < start0 || end0 - start0 < net0) revert InCallBalanceLoss();
@@ -565,6 +576,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      that debits the payer's other token outside that token's own transfer is still
     ///      counted. Token0 is checked first; both checks raise the same error.
     ///      Trust assumption: `balanceOf` is truthful (ARCHITECTURE §3).
+    /// @custom:report docs/REPORT.md §5.3 step 5, §5.4 (`maxDebit`)
     function _checkPayerDebit(uint256 start0, uint256 start1, uint256 maxDebit0, uint256 maxDebit1) private view {
         uint256 end0 = IERC20(token0).balanceOf(msg.sender);
         if (start0 > end0 && start0 - end0 > maxDebit0) revert PayerDebitTooHigh();
@@ -596,6 +608,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
 
     /// @dev Deficit entry check (U4, DECISIONS M6-2): reverts if either token's Pool balance is
     ///      below its recorded reserve. Equality passes. Only view calls, so no callback point.
+    /// @custom:report docs/REPORT.md §8.2
     function _checkNoDeficit() private view {
         if (IERC20(token0).balanceOf(address(this)) < reserve0 || IERC20(token1).balanceOf(address(this)) < reserve1) {
             revert ReserveDeficit();
@@ -638,6 +651,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     /// @dev Pulls `amount` of `token` from msg.sender and returns the Pool's measured balance
     ///      increase (ARCHITECTURE §5.2). For a U8 taxed token this is below `amount`.
     ///      A token whose balance falls during its own transferFrom makes the subtraction revert.
+    /// @custom:report docs/REPORT.md §4.2
     function _pullMeasured(address token, uint256 amount) private returns (uint256 received) {
         uint256 balanceBefore = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
@@ -649,6 +663,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      change reverts `OutboundTransferMismatch`, never an underflow Panic).
     ///      MIN-NET / BI-6: the recipient's actual increase (0 if its balance fell) must be at
     ///      least `minNet`; for a U8 taxed token it is below `amount`.
+    /// @custom:report docs/REPORT.md §4.2, §6.2 (A8, MIN-NET)
     function _pushMeasured(address token, address to, uint256 amount, uint256 minNet)
         private
         returns (uint256 received)
@@ -673,6 +688,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      3. Minting or burning is possible only while a `nonReentrant` entry point executes,
     ///         so a future `_mint`/`_burn` placed in an unguarded function fails loudly.
     ///      Consequence: BI-7 (Pool LP == 1000 after the first deposit) is enforced on-chain.
+    /// @custom:report docs/REPORT.md §3.2, §9.4
     function _update(address from, address to, uint256 value) internal override {
         if (from == address(this)) revert LockedLiquidity();
         if (to == address(this) && (from != address(0) || totalSupply() != 0 || value != MINIMUM_LIQUIDITY)) {

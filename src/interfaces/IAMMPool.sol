@@ -5,6 +5,7 @@ pragma solidity 0.8.38;
 /// @notice Holds only the `addLiquidity` parameter struct, so the Pool, the Factory tests and a
 ///         future Router can name it. `AMMPool` does not inherit this interface; it declares no
 ///         function, so it adds nothing to the Pool's compiled ABI.
+/// @custom:report docs/REPORT.md §5.1, §5.4
 interface IAMMPool {
     /// @notice Parameters of `AMMPool.addLiquidity` (DECISIONS M8-8, M8-13; ARCHITECTURE §7.2).
     /// @param amount0RequestMax Cap on the token0 amount the Pool may request with `transferFrom`.

@@ -10,6 +10,7 @@ import {AMMPool} from "./AMMPool.sol";
 /// @dev Specification: docs/ARCHITECTURE.md §8; decisions: docs/DECISIONS.md §14 (M7-1 … M7-8).
 ///      The Pool neither reads nor trusts the Factory (M7-3): authenticity of a Pool is verified
 ///      through this registry (`getPair(token0, token1) == pool`), not through the Pool itself.
+/// @custom:report docs/REPORT.md §4.1
 contract AMMFactory {
     /// @notice Surplus destination passed to every Pool this Factory creates (M7-1).
     /// @dev Immutable: a wrong value cannot be repaired; the only remedy is a new Factory, and
@@ -64,6 +65,7 @@ contract AMMFactory {
     ///      The Pool's own constructor checks still run and may revert (e.g. a token equal to
     ///      `surplusRecipient` → `AMMPool.InvalidSurplusRecipient`).
     /// @return pool The new Pool's address.
+    /// @custom:report docs/REPORT.md §4.1
     function createPair(address tokenA, address tokenB) external returns (address pool) {
         if (tokenA == address(0) || tokenB == address(0)) revert ZeroAddress();
         if (tokenA == tokenB) revert IdenticalTokens();

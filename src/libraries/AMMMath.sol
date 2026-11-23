@@ -10,6 +10,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 ///      Formulas: docs/ARCHITECTURE.md §6.1, §6.4; input ranges: §6.6; conventions: DECISIONS M2-5.
 ///      Arithmetic is Solidity 0.8 checked arithmetic: an overflow reverts with Panic(0x11)
 ///      and never returns a wrong value.
+/// @custom:report docs/REPORT.md §2, §4.3
 library AMMMath {
     /// @notice Swap fee in basis points, 100% retained by LPs (U1, D8).
     uint256 internal constant FEE_BPS = 30;
@@ -37,6 +38,7 @@ library AMMMath {
     /// @param reserveIn Recorded reserve of the input token before the swap (`rIn`).
     /// @param reserveOut Recorded reserve of the output token before the swap (`rOut`).
     /// @return amountOut Amount the Pool would send out (`out`), 0 ≤ out < reserveOut.
+    /// @custom:report docs/REPORT.md §2.2, §2.3
     function getAmountOut(uint256 amountIn, uint256 reserveIn, uint256 reserveOut)
         internal
         pure
@@ -53,6 +55,7 @@ library AMMMath {
     /// @notice Gross LP shares for the first deposit: floor(sqrt(net0 · net1)) (ARCHITECTURE §6.1).
     /// @dev Value before the 1,000-unit lock is subtracted (that step belongs to M3).
     ///      Returns 0 if either input is 0; callers validate. Panic(0x11) if net0 · net1 ≥ 2^256.
+    /// @custom:report docs/REPORT.md §3.2
     function initialShares(uint256 net0, uint256 net1) internal pure returns (uint256) {
         return Math.sqrt(net0 * net1);
     }
