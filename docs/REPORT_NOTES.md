@@ -98,7 +98,7 @@ The unmatched amount is not the user's loss one-to-one. Under X1 the depositor o
 | T4 layer "no donation into reserves" | weakened, bounded by `maxExcess` | intact | changed | as the Pool |
 | New attack surface | JIT capture of excess | refund callbacks, A8 on refund | MEV on deposits, rounding | allowances, stranded funds |
 | Implementation and test burden | medium | medium-high | very high | high (second contract) |
-| Gas | measured in G05 (TEST_MATRIX §14.5): +10,264 gas (+10.4 %) on the G03-comparable later-deposit path | not measured | not measured | not measured |
+| Gas | measured in G05 (TEST_MATRIX §14.5): +10,264 gas (+10.4 %) on the G03-comparable later-deposit path. Evaluated, not adopted: VA, VB, VC; VC (deficit check on the start snapshot) measured −1,856 on P1–P4 and −1,924 on P6–P8, but with token0 in deficit and a reverting `token1.balanceOf` the reported error changes from `ReserveDeficit()` to the token's revert; the VA + VB + VC combination (about 3,300 on P1) is an unverified estimate | not measured | not measured | not measured |
 
 ### 1.6 Bounding the unmatched contribution: absolute amount vs. percentage of the receipt
 

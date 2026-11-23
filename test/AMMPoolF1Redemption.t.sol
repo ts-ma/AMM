@@ -20,7 +20,8 @@ import {addParamsOrdered} from "./utils/AddParams.sol";
 ///           (equal to S/(S+σ)·(u_i + δ_i) with δ_i = ceil(σ·r_i/S) − σ·r_i/S);
 ///         - redemption rounding     C_i − floor(C_i) ∈ [0, 1);
 ///         - actual shortfall vs the Pool's net   n_i − floor(C_i).
-///         Conditions for "receipt = floor(C_i)": the redemption is the very next Pool call
+///         floor(C_i) is the Pool-side redemption gross; the wallet receipt is the recipient's
+///         actual balance change. Conditions for "receipt = floor(C_i)": the redemption is the very next Pool call
 ///         (no state change in between), both reserves are positive, both gross outputs
 ///         floor(C_i) are at least 1 (otherwise `removeLiquidity` reverts
 ///         `InsufficientLiquidityBurned`, M4-3r), and the outbound transfer arrives in full
