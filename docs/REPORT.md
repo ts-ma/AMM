@@ -243,7 +243,7 @@ Unit tests use exact values from independent models; fuzz tests cover the docume
 
 ### 10.6 Final regression
 
-Final code and tests: commit `04eb336`; `src/`, `test/`, `lib/` and `foundry.toml` are unchanged in every later commit of this branch (`git diff 04eb336`), so the run below stands (`src/` logic identical to the M8 acceptance `550bc80`: bytecode built without CBOR metadata is unchanged). Commands: `forge build`; `forge test`; `FOUNDRY_FUZZ_RUNS=10000 forge test`. Result: **492 tests in 55 suites passed, 0 failed**, in both runs (invariant suites use their inline 256 × 500 setting). Configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`; forge 1.9.0.
+Final code and tests: commit `04eb336`; `src/`, `test/`, `lib/` and `foundry.toml` are unchanged in every later commit of this branch (`git diff 04eb336`), so the run below stands (`src/` logic identical to the accepted measured-deposit version `550bc80`: bytecode built without CBOR metadata is unchanged). Experimental contracts (§11.4) are not part of this run. Commands: `forge build`; `forge test`; `FOUNDRY_FUZZ_RUNS=10000 forge test`. Result: **492 tests in 55 suites passed, 0 failed**, in both runs (invariant suites use their inline 256 × 500 setting). Configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`; forge 1.9.0.
 
 ## 11. Gas
 
@@ -276,12 +276,25 @@ No same-harness gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.1
 
 ### 11.4 Architecture alternatives evaluated, not adopted
 
-[gas] Isolated branch `m11-gas-exp`, baseline `a85cd8d`, same configuration and harness method; full data TEST_MATRIX §14.7.
+[gas] Same configuration and method as §11.1, on isolated, unmerged branches, separate from §10.6: `m11-gas-exp` on `a85cd8d`, A and B (TEST_MATRIX §14.7); `m11-router-exp`, commit `da59581` on `8c7aefe` (code as in §10.6), C and the minimal deposits (TEST_MATRIX §14.8).
 
 | Alternative | Measured effect | Trade-off | Decision |
 |---|---|---|---|
 | A: skip the payer snapshot of token i when `maxDebit_i = type(uint256).max` | Later deposit, ordinary tokens, token0 first [measured]: both MAX 108,789 → 104,943 (−3,846); one MAX, one finite 108,477 → 106,617 / 106,618 (−1,860 / −1,859); both finite 108,165 → 108,292 (+127). L46 uses finite bounds, so it gains nothing. The finite side still binds (exact debit passes, one unit less reverts `PayerDebitTooHigh`). | Benefits callers who give up the debit bound; callers who keep it pay +127. A deposit with an unsupported token whose `balanceOf(payer)` reverts would no longer fail at the snapshot. | Evaluated, not adopted: M8-3 keeps one uniform rule (always measure the payer); MAX is not a default. |
 | B: one shared Pool implementation, ERC-1167 clones with immutable arguments | Cold micro-benchmark [measured], same result returned: a clone call costs **+2,588** without reading the three addresses (delegatecall path) and **+6,072** when reading them (`fetchCloneArgs`); creating a clone 115,269 vs 2,159,325 for `new AMMPool`. The cost on each entry of a full Pool was **not measured** (Pool not ported). | The pair creator saves ≈ 2.04M once. Both measured call paths incurred extra gas. At 6,072 extra gas per call, about 337 calls would offset the estimated per-pair deployment saving, before allocating the shared implementation cost [estimated]. Constructor checks move to the Factory; Pools can no longer be deployed directly. | Evaluated, not adopted. In frequently used pools, recurring overhead could outweigh the initial deployment saving. |
+| C: move the payer-debit check from the Pool to an optional Router; all other deposit checks stay in the Pool | Later deposit, ordinary tokens, same outcome on all paths [measured]: current Pool 108,185; **direct** deposit without the check 104,135 (−4,050); **protected** via the Router 230,294 (+122,109, of which 45,386 is a refund for clearing the Router's balances and approvals). In the Router the exact debit bound passes; one unit tighter reverts the whole call. | Direct callers have no debit bound. The Router must take the tokens first (4 `transferFrom` instead of 2, 8 more reads), so a token taxed on every transfer is taxed twice: in the §5.2 example the same payment buys 1,145 shares instead of 1,272. Unlike A, which keeps a finite bound in the Pool, protection becomes optional. | Evaluated, not adopted. |
+
+**Minimal deposits (same experiment).** Two Pool variants keep the caps, step-2 planning, `nonReentrant`, the lock and zero-share rejection, but drop every caller bound; a separate interface lists what their entry points do not provide. *Four reads*: both Pool balances before and after the two transfers (the first pair also serves the deficit check). *Two reads*: balances after payment minus recorded reserves, as in Uniswap V2 (different accounting rules). Same deposit as row C [measured]:
+
+| Design | Pool `balanceOf` | Gas | Most important guarantee given up |
+|---|---:|---:|---|
+| Current Pool | 14 | 108,185 | — |
+| No payer check, direct | 10 | 104,135 | the payer-debit bound |
+| Router-protected (C) | 10 + 8 in Router | 230,294 | equal outcome for taxed tokens |
+| Four reads | 4 | 94,079 | `minShares`, `maxExcess`, the debit bound, the re-plan (taxed token first: 1,000 instead of 900 token0 for the same shares), BI-2′ (balance changes by others during the call fall on the depositor) |
+| Two reads | 2 | 92,445 | the surplus and deficit rules: a 200-token1 donation made earlier goes to the next depositor (1,414 instead of 1,272 shares); a deficit is refilled from the depositor's payment |
+
+Against the unchanged 492-test suite the three variants fail 16, 66 and 90 tests; apart from three ABI-list tests that fail only because the test adapter adds an entry point, every failure is in these guarantees. The lowest measured count that keeps this project's donation and deficit rules is **4** (for balances present before the call, the only case supported tokens can create [source, §9.6]); under balance-minus-reserve rules it is **2**. None was adopted; production code is unchanged.
 
 ## 12. Limitations
 

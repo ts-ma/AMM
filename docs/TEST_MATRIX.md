@@ -771,6 +771,116 @@ Earlier reuse variants (§14.5) target readings 1–4 (VC), 3 with 7 (VB) and 9/
 **VP / VU / VA–VC:** cited from §14.5 and §14.6; no new architectural reason found to re-open them (VU stays not adopted, student decision).
 
 **Decision (student, 2026-11-23, DECISIONS M11-1):** candidates A and B are **evaluated, not adopted**; VU stays not adopted. The approved M8-3 rule (snapshot the payer's balance of both tokens on every deposit) and the full-Pool deployment are kept. Report §11.4 summarises both.
+
+### 14.8 M11 deposit experiment: payer-debit placement and minimal deposits (2026-11-24; isolated experiment, no production change)
+
+**Baseline and experiment.**
+- Baseline: `m11-report` at `8c7aefe`. Its `src/`, `test/`, `lib/` and `foundry.toml` are identical to `04eb336`: `git diff --stat 04eb336 8c7aefe -- src test lib foundry.toml` is empty.
+- Experiment: local branch `m11-router-exp`, commit **`da59581`**, in a worktree in the scratchpad. Not merged, not pushed. `src/AMMPool.sol` and all project tests are unchanged in `da59581`; the new code is under `src/experiment/`, `test/experiment/` and `experiment/`.
+- Configuration (`forge config` in the worktree): solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`, OZ v5.7.0, forge 1.9.0 (`6056c58`).
+- These results are separate from the accepted production regression on `04eb336` (492 tests in 55 suites, recorded in report §10.6). That regression was not rerun on the production branch for this experiment.
+
+**Variants (one build, so all gas values are comparable with each other).** The three Pool variants are generated from `src/AMMPool.sol` by `experiment/gen_variants.py`.
+
+| Path | Contract / entry point | What differs from the current Pool |
+|---|---|---|
+| Current (control) | `AMMPool.addLiquidity`, finite `maxDebit` | none (production code) |
+| Current, `maxDebit` MAX | same, `maxDebit = type(uint256).max` | none (reference) |
+| No-payer, direct | `AMMPoolNoPayerDebit.addLiquidity` | the 4 payer reads and `_checkPayerDebit` removed. The `maxDebit` fields stay in the struct (identical calldata) and are ignored |
+| Router, protected | `AMMDepositRouter.addLiquidityProtected(pool, p)` → `AMMPoolNoPayerDebit` | the payer-debit bound moves to the Router. The Pool keeps measured receipts, request caps, re-planning of the second token, the whole-call balance check BI-2′, `minShares` and `maxExcess` |
+| Four-read | `AMMPoolFourRead.addLiquidityCapsOnly(cap0, cap1, recipient, deadline, token1First)` | reads both Pool balances before both transfers and reuses them for the deficit check; both requests are fixed by step 2 (no re-plan); reads both balances after; `n_i = after_i − before_i`; `reserve_i += n_i` |
+| Two-read | `AMMPoolTwoRead.addLiquidityBalanceDelta(…)` (same arguments) | **different accounting rules**: no reads before the transfers; `n_i = balance_i − reserve_i` after both transfers; reserves become the balances. Reverts `ReserveDeficit` if a balance is still below its reserve |
+
+Router sequence:
+1. Read the user's two balances.
+2. Plan the step-2 pair from the Pool's reserves (the same formula as the Pool).
+3. `transferFrom` user → Router for both tokens.
+4. Read the Router's holdings and `forceApprove` exactly those amounts to the Pool.
+5. Call `addLiquidity` with request caps `min(cap, held)`; the Pool does `transferFrom` Router → Pool.
+6. Read the Router's remainder, refund it with `transfer` and reset both approvals to 0.
+7. Read the user's balances again and revert `PayerDebitTooHigh` if `start − end > maxDebit_i`.
+
+Both caps-only entry points are declared in `src/experiment/IAMMPoolExperimentalDeposit.sol`, whose NatSpec lists the protections each one provides and does not provide. All variants keep `nonReentrant`, the 1,000-share lock, zero-share rejection, the checked `S + σ` and the reserve writes stated above.
+
+**Method.**
+- Gas: `test/experiment/GasDepositPlacement.t.sol`, `forge test --match-contract GasPlacement -vv`, run twice with identical values. Same method as G02 (§14.6): every argument is a local before the first `gasleft()`, one top-level call, `isolate = true` (cold). GAS is the `gasleft()` difference: no 21,000 base cost, no calldata cost, refunds not subtracted. REFUND is `vm.lastCallGas().gasRefunded` of the same call (the EIP-3529 counter; at transaction level the refund is capped at 1/5 of the gas used).
+- Outcomes and counts: `test/experiment/DepositPlacement.t.sol` and `DepositPlacementInCall.t.sol`. Balances are read outside any gas interval. Calls are counted from Foundry's recorded account accesses (`vm.startStateDiffRecording`) by caller and selector, cross-checked once against the `-vvvv` text trace of the ordinary Router call.
+- Expected values: a hand-computed integer model of each variant's formulas, asserted in the tests.
+- Scenarios:
+  - **ORD**: `MockERC20`, Pools seeded (1000e18, 2000e18); alice is payer and recipient; caps (1e18, 2e18), token0 first; `maxDebit` (1e18, 2e18).
+  - **L46**: the report's worked example. Reserves (10,000, 20,000), `S = 14,142`. token1 is taxed 10 % on **every** `transferFrom`, and the tax is burned from the amount sent. bob: caps (1,000, 2,500), `maxDebit` (1,000, 2,000), `maxExcess` (100, 1), `minShares` 0 so that all paths can be compared (1,272 is tested separately). "Taxed second" means token0 first; "taxed first" means `token1First`.
+  - **DON**: L46 taxed second, plus a direct untaxed `transfer` of 200 token1 to the Pool beforehand. token1 is the limiting side (candidate shares 1,414 vs 1,272).
+  - **DEF**: `MockDeficitERC20` pair, reserves (10,000, 20,000); 100 token0 slashed from the Pool (balance 9,900); caps (1,000, 2,000).
+
+**Results: ordinary tokens (ORD).** The same economic outcome on every path: debit (1e18, 2e18), Pool receipt (1e18, 2e18), shares 1,414,213,562,373,095,048, reserves (1001e18, 2002e18), surplus 0.
+
+| Path | Pool `balanceOf` | Router `balanceOf` | `transferFrom` | `transfer` | `approve` | GAS | REFUND | Δ GAS vs current |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Current, finite `maxDebit` | 14 | — | 2 | 0 | 0 | 108,185 | 0 | — |
+| Current, `maxDebit` MAX | 14 | — | 2 | 0 | 0 | 108,809 | 0 | +624 |
+| No-payer, direct | 10 | — | 2 | 0 | 0 | 104,135 | 0 | −4,050 |
+| Router, protected | 10 | 8 | 4 | 0 | 4 | 230,294 | 45,386 | +122,109 |
+| Four-read | 4 | — | 2 | 0 | 0 | 94,079 | 0 | −14,106 |
+| Two-read | 2 | — | 2 | 0 | 0 | 92,445 | 0 | −15,740 |
+
+Who calls what on the Router path (trace):
+- alice → Router: 2 × `transferFrom` called by the Router, 30,420 gas each (the Router's balance goes from zero to non-zero).
+- Router → Pool: 2 × `transferFrom` called by the Pool.
+- The Pool measures its own balance; the Router measures the user's balance and its own.
+
+The refund comes from the Router clearing its balances and approvals back to 0. If the deposit were its own transaction, the 1/5 cap would not bind (about 230k + 21k base), so the net cost would be about 230,294 − 45,386 = 184,908 plus the base and calldata costs [estimate, not measured as a transaction receipt]. The 624 gas between finite and MAX `maxDebit` was not separated further; the same sign was found in §14.7.
+
+**Results: L46 transfer tax.** One row per group of paths with the same outcome. "Reads" are the Pool's `balanceOf` calls.
+
+| Order | Paths | Debit (t0, t1) | Pool receipt | Shares | Reserves after | t1 tax burned | Reads | GAS |
+|---|---|---|---|---:|---|---:|---|---|
+| taxed second | current / current MAX / no-payer / four-read / two-read | 1,000, 2,000 | 1,000, 1,800 | 1,272 | 11,000, 21,800 | 200 | 14 / 14 / 10 / 4 / 2 | 193,459 / 194,179 / 189,273 / 179,853 / 178,151 |
+| taxed second | Router | 900, 2,000 | 900, 1,620 | **1,145** | 10,900, 21,620 | **380** | 10 Pool + 8 Router | 361,519 (REFUND 71,631) |
+| taxed first | current / current MAX / no-payer (re-plan lowers token0 to 900) | 900, 2,000 | 900, 1,800 | 1,272 | 10,900, 21,800 | 200 | 14 / 14 / 10 | 193,862 / 194,582 / 189,676 |
+| taxed first | four-read / two-read (no re-plan) | **1,000**, 2,000 | 1,000, 1,800 | 1,272 | 11,000, 21,800 | 200 | 4 / 2 | 179,876 / 178,174 |
+| taxed first | Router | 810, 2,000 | 810, 1,620 | **1,145** | 10,810, 21,620 | **380** | 10 Pool + 8 Router | 361,933 (REFUND 71,714) |
+
+- **The Router path is not economically equivalent** with a token that taxes every `transferFrom`. The tax is charged twice: 200 on user → Router and 180 on Router → Pool. The user pays the same 2,000 token1 but receives 1,145 shares instead of 1,272 (−10 %). The surplus token0 (100 or 190) is refunded with an untaxed `transfer`, so 5 transfers occur instead of 2. With the L46 `minShares = 1,272` the Router path reverts `InsufficientShares` with a full rollback, while the current Pool mints 1,272 (`test_L46_routerFailsL46MinShares`). The Router gas figures therefore compare different economic outcomes. The no-payer direct path has the same outcome as the current Pool, so its gas difference measures only the removed payer reads: −4,186 (taxed second) and −4,186 (taxed first).
+- **No re-plan (four-read, two-read):** when the taxed token arrives first, the user pays 100 token0 more than with the current Pool for the same 1,272 shares. The 100 stays in the reserves as excess, with no `maxExcess` bound.
+
+**Results: pre-existing donation (DON)** and **pre-existing deficit (DEF).**
+
+| Scenario | Path | Debit | Pool balance increase | Mint input `n` | Shares | Reserves after | Surplus after | Reads | GAS |
+|---|---|---|---|---|---:|---|---|---:|---:|
+| DON | current / no-payer / four-read | 1,000, 2,000 | 1,000, 1,800 | 1,000, 1,800 | 1,272 | 11,000, 21,800 | 0, **200** | 14 / 10 / 4 | 193,459 / 189,273 / 179,853 |
+| DON | Router | 900, 2,000 | 900, 1,620 | 900, 1,620 | 1,145 | 10,900, 21,620 | 0, 200 | 10 + 8 | 361,519 |
+| DON | **two-read** | 1,000, 2,000 | 1,000, 1,800 | 1,000, **2,000** | **1,414** | 11,000, 22,000 | 0, **0** | 2 | 178,151 |
+| DEF | current, current MAX, no-payer, Router, four-read | — | — | — | — | revert `ReserveDeficit`, full rollback | | — | — |
+| DEF | **two-read** | 1,000, 2,000 | 1,000, 2,000 | **900**, 2,000 | 1,272 | 10,900, 22,000 | 0, 0 | 2 | 109,537 |
+
+- DON: the two-read path credits the 200 donated token1 to the depositor, who receives 1,414 shares (+142) instead of 1,272, and the donation leaves the surplus. That breaks the project rule that a direct transfer never enters the reserves (report §4.4, §8.3). The four-read path keeps the donation as surplus.
+- DEF: the two-read deposit refills the 100 token0 deficit out of the depositor's payment. The depositor is credited with 900, the reserves become the balances, and the write-down that `sync()` would charge to all LPs, or that a third-party top-up would avoid, is paid by this depositor alone. A payment smaller than the deficit reverts `ReserveDeficit` (rollback checked). The four-read path keeps the project's deficit block.
+
+**Router protection (rollback checked on every revert: user, Pool and Router balances, Router allowances, reserves, supply and LP balance unchanged).**
+- ORD, Router: `maxDebit` (1e18, 2e18) passes. (1e18 − 1, 2e18) and (1e18, 2e18 − 1) revert `PayerDebitTooHigh`, including the user → Router transfers and the mint (`test_ordinary_routerBoundBinds`). Current Pool control: identical (`test_ordinary_currentBoundBinds_control`).
+- L46, Router: the actual debit (900, 2,000) passes exactly; (899, 2,000) and (900, 1,999) revert (`test_L46_routerBoundBinds`). Current Pool control at its actual debit (1,000, 2,000): identical (`test_L46_currentBoundBinds_control`).
+- The direct no-payer path accepts `maxDebit = (0, 0)` (`test_ordinary_noPayerIgnoresDebitBound`): direct callers have no debit bound at all.
+
+**Balance changes by someone else during the call** (`DepositPlacementInCall.t.sol`; a `ReentrantERC20` callback during the second transfer mints or slashes the other token at the Pool; unsupported-token behaviour, THREAT_MODEL T30).
+- Foreign gift: the current Pool keeps it as surplus. Four-read and two-read add it to the depositor's `n` and to the reserves; the share count is unchanged because that token is not the limiting side.
+- Foreign removal: the current Pool reverts `InCallBalanceLoss`. Four-read and two-read succeed and charge the loss to the depositor (fewer shares).
+- Reentrancy: re-entering the deposit, swap, remove, `sync` or `skim` from a token callback reverts `ReentrancyGuardReentrantCall` on both caps-only Pools. Re-entering the Router reverts the same way.
+
+**Which existing guarantees each variant gives up.** The unchanged project suite (492 tests) was run against each Pool variant through drop-in adapters (`py -I experiment/gen_variants.py --adapters DIR`, copied over `src/AMMPool.sol` in a `git archive` copy of `da59581`; `forge test --no-match-path "test/experiment/*"`, default fuzz runs). The adapter maps `addLiquidity(AddLiquidityParams)` onto the variant and ignores the fields the variant does not have. The three `test_X03_static_*` failures come from the adapter's extra ABI entry, not from the deposit logic.
+
+| Variant | Passed / 492 | Failing groups (test functions) | Guarantee given up |
+|---|---:|---|---|
+| No-payer | 476 | `AMMPoolPayerDebit` (10: `test_L37_*`, `test_L38_*`, `test_L40_payerDebit*`), invariant I6 (2 suites), `test_L40_inCallBalanceLossBeforePayerDebitTooHigh_allCases`, `test_L40_fullChain_threeSimultaneousFailures`, `testFuzz_Z09_invariants`, `test_L46_reportWorkedDeposit` (its `maxDebit1 = 1,999` case) | payer-debit bound only; everything else passes |
+| Four-read | 426 | the no-payer group; `minShares` (`test_L08_*`, `test_L18_*`, `test_L45_*`, `test_F1T7_*`, `test_L13b_*` 2); `maxExcess` (`AMMPoolMaxExcess` 3, `test_L44_*`, `test_F1T5_*` 4, `test_X01_add_caughtFaulty_*`); in-call checks (`AMMPoolInCallBalance` 9, `test_B08_addDonationDuringFirstPull`); re-plan (`test_L31_L34_*`, `test_L33_*`, `test_L39_*`, `AMMPoolReplan` 3, `AMMPoolMeasuredDeposit` `test_L42_*` 3); excess bound at extreme requests (`AMMPoolF1ExtremeRequest` 11); differential oracles of the current rules (`testFuzz_Z08_*`, `test_Z08iiib_*`, `testFuzz_Z09_*`); X03 (adapter) | payer debit, `minShares`, `maxExcess`, per-transfer measurement and BI-2′, re-plan. **All deficit tests (R08, R24) and all tests of surplus present before the call (B01, L20, R07, L13, B09a) pass** |
+| Two-read | 402 | the four-read groups plus deficit (`AMMPoolDeficit` 9: R08, R24; `AMMPoolMixedDeficitSurplus` 2; `AMMPoolF1SurplusAccounting` 4), surplus (`test_B01_*`, `test_L20_*`, `test_R07_B01_*`, `test_L13_inflationAttemptFails`, `test_L13b_directDonationPlusSync_doesNotInflate`, `test_B09a_*` 3), `test_R12_failingSkimRevertsOnlySkim` | in addition: surplus is absorbed by the next depositor, and a deficit no longer blocks deposits |
+
+**Lowest measured counts.**
+- Under this project's donation and deficit rules, the lowest measured count is **4 Pool reads (four-read, 94,079 gas)**. Tested scope: balances present before the call. For supported tokens no one else can change a Pool balance during the call (they have no callbacks [source], report §9.6). With unsupported callback tokens, four-read attributes in-call changes to the depositor instead of rejecting a loss.
+- Under the alternative balance-minus-reserve rules, the lowest measured count is **2 reads (two-read, 92,445 gas)**.
+- No variant below 2 reads was built.
+
+**Status.** Experiment only; production code unchanged. Adopting any variant would change approved decisions: M8-3 (the Pool measures the payer), M8-2 (`maxExcess`), M8-11 (BI-2′), M8-12 (re-plan), M6-2 (the deficit block) and the §4.4 surplus rule for the two-read Pool. It needs the student's decision. Report §11.4 summarises the result.
+
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
 Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
