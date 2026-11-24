@@ -281,7 +281,7 @@ No same-harness gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.1
 | Alternative | Measured effect | Trade-off | Decision |
 |---|---|---|---|
 | A: skip the payer snapshot of token i when `maxDebit_i = type(uint256).max` | Later deposit, ordinary tokens, token0 first [measured]: both MAX 108,789 → 104,943 (−3,846); one MAX, one finite 108,477 → 106,617 / 106,618 (−1,860 / −1,859); both finite 108,165 → 108,292 (+127). L46 uses finite bounds, so it gains nothing. The finite side still binds (exact debit passes, one unit less reverts `PayerDebitTooHigh`). | Benefits callers who give up the debit bound; callers who keep it pay +127. A deposit with an unsupported token whose `balanceOf(payer)` reverts would no longer fail at the snapshot. | Evaluated, not adopted: M8-3 keeps one uniform rule (always measure the payer); MAX is not a default. |
-| B: one shared Pool implementation, ERC-1167 clones with immutable arguments | Cold micro-benchmark [measured], same result returned: a clone call costs **+2,588** without reading the three addresses (delegatecall path) and **+6,072** when reading them (`fetchCloneArgs`); creating a clone 115,269 vs 2,159,325 for `new AMMPool`. The cost on each entry of a full Pool was **not measured** (Pool not ported). | The pair creator saves ≈ 2.04M once; every later caller of that Pool pays extra on every call. Break-even ≈ 337 calls per pair [estimated: +6,072 per call, without amortising the deployment of the shared implementation]. Constructor checks move to the Factory; Pools can no longer be deployed directly. | Evaluated, not adopted: busy pools would pay the extra cost on every call. |
+| B: one shared Pool implementation, ERC-1167 clones with immutable arguments | Cold micro-benchmark [measured], same result returned: a clone call costs **+2,588** without reading the three addresses (delegatecall path) and **+6,072** when reading them (`fetchCloneArgs`); creating a clone 115,269 vs 2,159,325 for `new AMMPool`. The cost on each entry of a full Pool was **not measured** (Pool not ported). | The pair creator saves ≈ 2.04M once. Both measured call paths incurred extra gas. At 6,072 extra gas per call, about 337 calls would offset the estimated per-pair deployment saving, before allocating the shared implementation cost [estimated]. Constructor checks move to the Factory; Pools can no longer be deployed directly. | Evaluated, not adopted. In frequently used pools, recurring overhead could outweigh the initial deployment saving. |
 
 ## 12. Limitations
 
@@ -301,7 +301,7 @@ Most important for users and LPs:
 | Small positions may be unredeemable; terminal pools cannot trade again | 6.3, 6.4 |
 | Quotes ignore taxes and deficits; views unsafe mid-transaction | 2.4, 9.1 |
 | Deposit/withdraw fields are positional (token0/token1); swaps use an address | 5.1 |
-| No event records the payer's debit or the excess; the excess is reconstructed from the log | 5.2 |
+| The Pool does not emit the payer's debit or the unmatched amounts. The latter can be reconstructed from the Pool's logs using the pre-mint state (§5.2). | 5.2 |
 
 ## 13. Traceability
 
