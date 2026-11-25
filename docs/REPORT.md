@@ -243,20 +243,20 @@ Unit tests use exact values from independent models; fuzz tests cover the docume
 
 ### 10.6 Final regression
 
-Final code and tests: commit `04eb336`; `src/`, `test/`, `lib/` and `foundry.toml` are unchanged in every later commit of this branch (`git diff 04eb336`), so the run below stands (`src/` logic identical to the accepted measured-deposit version `550bc80`: bytecode built without CBOR metadata is unchanged). Experimental contracts (§11.4) are not part of this run. Commands: `forge build`; `forge test`; `FOUNDRY_FUZZ_RUNS=10000 forge test`. Result: **492 tests in 55 suites passed, 0 failed**, in both runs (invariant suites use their inline 256 × 500 setting). Configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`; forge 1.9.0.
+Final code and tests: commit `36ec9e3`. It differs from the earlier regression commit `04eb336` only in `src/AMMPool.sol`: `name()` and `symbol()` return their constants (§11.2; ABI unchanged, no test changed). `src/`, `test/`, `lib/` and `foundry.toml` are unchanged in every later commit of this branch (`git diff 36ec9e3`). Apart from that change, the `src/` logic is that of the accepted measured-deposit version `550bc80`. Experimental contracts (§11.4) are not part of this run. Commands: `forge build`; `forge test`; `FOUNDRY_FUZZ_RUNS=10000 forge test`. Result: **492 tests in 55 suites passed, 0 failed**, in both runs (invariant suites use their inline 256 × 500 setting). Configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`; forge 1.9.0.
 
 ## 11. Gas
 
 ### 11.1 Measured baseline
 
-[gas] `test/gas/GasG02.t.sol`: one call per test, arguments prepared outside the measured interval, cold state (`isolate = true`); single scenarios, for comparisons inside this project only.
+[gas] `test/gas/GasG02.t.sol` on the code of §10.6 (`36ec9e3`): one call per test, arguments prepared outside the measured interval, cold state (`isolate = true`); single scenarios, for comparisons inside this project only.
 
 | Call | Gas | Call | Gas |
 |---|---:|---|---:|
 | `addLiquidity` initial | 232,004 | `swapExactInput` | 82,539 |
 | `addLiquidity` later | 108,814 | `skim` (both tokens) | 101,777 |
 | `removeLiquidity` | 94,105 | `sync` / `skim` no-op | 40,067 / 39,905 |
-| deploy `AMMPool` | 2,422,397 | `createPair` | 2,316,864 |
+| deploy `AMMPool` | 2,349,039 | `createPair` | 2,246,710 |
 
 Protection has a price [gas]. In one harness (TEST_MATRIX §14.5, which gives 108,789 where the table gives 108,814) the same later deposit costs +10,264 (+10.4 %) more than the earlier ordinary-token-only deposit of commit `26ac725`: deficit check, step 2, two measured pulls that had to deliver the plan or one unit more, `minShares`; taxed later deposits reverted. The difference covers 8 more `balanceOf` reads (14 instead of 6: payer debit and BI-2′), the re-plan, the excess bound and the struct-encoded call (previously seven arguments); the parts were not measured separately.
 
@@ -265,6 +265,7 @@ Protection has a price [gas]. In one harness (TEST_MATRIX §14.5, which gives 10
 | | Change | Measured effect [gas] | Decision |
 |---|---|---|---|
 | Adopted | `removeLiquidity` burns the caller's shares **before** computing the amounts (`mulDiv`) | a withdrawal that fails for insufficient LP costs 27,926 instead of 30,469 (−2,543); a successful one 6 gas less (TEST_MATRIX §14.1) | kept: cheaper failure and the clearer error (`ERC20InsufficientBalance` instead of an overflow panic) |
+| Adopted | LP `name()` / `symbol()` return their constants instead of reading two stored strings | `createPair` −70,154 or a Pool deployment −73,358 (separate comparisons); each getter ≈ −2,700 (§11.4) | kept: no measured cost; declared `view`, so the ABI is unchanged |
 | Rejected | VP: `uint112` reserves in one storage slot (as Uniswap V2) | ≈ −4,300 per add/remove/swap, −21,567 on the first deposit, but +159,273 per deployment | caps reserves at `2¹¹²` (13 range tests fail; a new error case and range rules would be needed) |
 
 VU (`unchecked` on arithmetic proven safe) saved 263–534 gas per state-changing call; it was not adopted, because checked arithmetic turns a mistake in those proofs, or in a later edit, into a revert instead of a silent wrap. Other measured variants are in TEST_MATRIX §14.
@@ -274,9 +275,9 @@ VU (`unchecked` on arithmetic proven safe) saved 263–534 gas per state-changin
 
 No same-harness gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.16 and was not imported). From the V2 source (§13.3): V2 packs `uint112` reserves with a timestamp in one slot; computes deposits as `balance − reserve` after the router transferred tokens; keeps user minima in Router02; swaps optimistically with flash swaps; lets `sync` move reserves both ways; locks 1,000 LP at `address(0)`; and has a protocol fee and price accumulators. V2 keeps the core minimal and cheap and leaves protection to the periphery; this design puts the protections in the Pool, which costs gas but holds for every caller.
 
-### 11.4 Architecture alternatives evaluated, not adopted
+### 11.4 Alternatives evaluated
 
-[gas] Same configuration and method as §11.1, on isolated, unmerged branches, separate from §10.6: `m11-gas-exp` on `a85cd8d`, A and B (TEST_MATRIX §14.7); `m11-router-exp`, commit `da59581` on `8c7aefe` (code as in §10.6), C and the minimal deposits (TEST_MATRIX §14.8).
+[gas] Same configuration and method as §11.1, on isolated, unmerged branches, separate from §10.6: `m11-gas-exp` on `a85cd8d`, A and B (TEST_MATRIX §14.7); `m11-router-exp`, commit `da59581` on `8c7aefe` (code of `04eb336`, before the change of §11.2), C and the minimal deposits (TEST_MATRIX §14.8).
 
 | Alternative | Measured effect | Trade-off | Decision |
 |---|---|---|---|
@@ -296,13 +297,13 @@ No same-harness gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.1
 
 Against the unchanged 492-test suite the three variants fail 16, 66 and 90 tests; apart from three ABI-list tests failed by the test adapter's extra entry point, every failure is in these guarantees. Among the tested variants, four reads is the lowest count that preserved this project's rules for surplus and deficit present before the call (the only case supported tokens can create [source, §9.6]); two reads is the lowest under the balance-minus-reserve rules; fewer reads were not tested. None was adopted; the production Pool is retained (student decision).
 
-**Three smaller changes (same method; each on its own branch from the code of §10.6, measured against a fresh baseline in the same harness; TEST_MATRIX §14.9).** All three keep the ABI and every deposit protection; the full suite plus the experiment's own tests passed on each variant, with no static or behavioural failure.
+**Three smaller changes** (same method; each on its own branch from `04eb336`, measured against a fresh baseline in the same harness; TEST_MATRIX §14.9). All three keep the ABI and every deposit protection; the full suite plus each experiment's own tests passed on every variant. The third was adopted (§11.2); the first two were not.
 
-| Change | Measured effect [gas] | Who pays | Recommendation |
+| Change | Measured effect [gas] | Who pays | Decision |
 |---|---|---|---|
-| Later deposit reuses the Pool's own balance readings: 6 Pool + 4 payer `balanceOf` instead of 10 + 4 (counted from recorded calls) | −3,437 (ordinary tokens), −3,573 / −3,594 (§5.2 taxed token, either order); same shares, debits, reserves, events and errors, including the deficit error order. (A Pool with no payer-debit check at all, 10 + 0 reads, measures 613 less.) | Pool deployer: +243,957 per deployment (+1,132 B); ≈ 71 deposits to recover [estimate] | Sound, but it relies on no balance changing between reused readings (only read-only calls occur there); not in the submitted code |
-| Factory stores each pair once; `getPair` sorts the two addresses | `createPair` −22,238 | every paid on-chain `getPair`: +101 (sorted) / +111 (reversed order); break-even ≈ 220 / 200 lookups per pair [estimate] | Keep the current registry: lookups recur, the saving does not |
-| LP `name()` / `symbol()` return constants instead of reading storage | `createPair` −70,154, or a standalone deployment −73,358 (separate comparisons, not additive); each getter ≈ −2,700; Pool runtime −151 B | no cost measured | Best candidate; not in the submitted code (adoption needs a separate decision) |
+| Later deposit reuses the Pool's own balance readings: 6 Pool + 4 payer `balanceOf` instead of 10 + 4 [measured, recorded calls] | [measured] −3,437 (ordinary tokens), −3,573 / −3,594 (§5.2 taxed token, either order). In the tested cases: same shares, debits, reserves, events and errors, including the deficit error order. A Pool with no payer-debit check at all (10 + 0 reads) measures 613 less | Pool deployer: +243,957 per deployment (+1,132 B); ≈ 71 deposits to recover [estimate] | Not adopted: it relies on no balance changing between reused readings (only read-only calls occur there) |
+| Factory stores each pair once; `getPair` sorts the two addresses | `createPair` −22,238. `getPair` [measured]: +101 (sorted order) / +111 (reversed) when cold or when the same order is repeated in one transaction; a reversed lookup after a sorted one in the same transaction costs 1,889 less (both orders now read one slot) | contracts paying for on-chain lookups of the first kind: break-even ≈ 220 (sorted) / 200 (reversed) such lookups per pair [estimate]; off-chain queries are free | Not adopted: lookups recur, the saving does not |
+| LP `name()` / `symbol()` return constants instead of reading storage | `createPair` −70,154, or a standalone deployment −73,358 (separate comparisons, not additive); each getter ≈ −2,700; Pool runtime −151 B | no cost measured | **Adopted** (§11.2): part of the code of §10.6 |
 
 ## 12. Limitations
 
