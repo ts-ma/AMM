@@ -1087,7 +1087,7 @@ Standalone deployment and `createPair` each contain one Pool creation. They are 
 
 **Report-branch checks (2026-11-25, after this experiment).**
 - Report commit **`951d55c`** adds one compact table at the end of report §11.4 (no section renumbered). The report PDF was exported from `docs/REPORT.md` at `951d55c` (same method as §14.8: Markdown → HTML with the same stylesheet, Edge headless print, A4, 10 pt): **10 pages** (limit 10), SHA-256 `72c2700e3485a5f60e23a54784ab670d1dd74ae4df3f155bfbccb3a91fa37a11`.
-- Cross-references checked on that text: all 25 `docs/REPORT.md §…` references in `src/` name an existing report section, and every identifier in the report's code index (§13.2) exists in `src/`.
+- Cross-references checked on that text: 22 `@custom:report docs/REPORT.md §…` tag lines in 4 files of `src/` (`AMMPool.sol` 16, `AMMFactory.sol` 2, `libraries/AMMMath.sol` 3, `interfaces/IAMMPool.sol` 1; no other `src/` line mentions `REPORT.md`), with 40 section references to 25 distinct report sections; every referenced section exists, and every identifier in the report's code index (§13.2) exists in `src/`.
 - `git diff --stat 04eb336 951d55c -- src test lib foundry.toml` is empty: no production code, test, library or configuration change on `m11-report` after the accepted regression. Later commits on `m11-report` change only `docs/TEST_MATRIX.md`.
 
 ### 14.10 Adoption of constant LP metadata and G02 refresh (2026-11-25, branch `m11-report`, commit `36ec9e3`)
@@ -1124,7 +1124,7 @@ Standalone deployment and `createPair` each contain one Pool creation. They are 
 - The report PDF was exported from `docs/REPORT.md` at **`dbb6bff`**. Method as §14.8: Markdown → HTML, Edge headless print, A4, 10 pt. One stylesheet rule was added, `p:has(+ table) { break-after: avoid; }`, so a paragraph that introduces a table stays on the table's page.
 - Result: **10 pages** (limit 10), SHA-256 `bf3f3d543fb1c16d9e571e39c7da3591281df2e990cca798f809c20514e94370`. The introduction of the §11.4 "three smaller changes" table is on the same page as the table (page 9).
 - References checked in both directions on that text:
-  - all 25 `docs/REPORT.md §…` tags in `src/` name an existing report section;
+  - 22 `@custom:report docs/REPORT.md §…` tag lines in 4 files of `src/` (`AMMPool.sol` 16, `AMMFactory.sol` 2, `libraries/AMMMath.sol` 3, `interfaces/IAMMPool.sol` 1; no other `src/` line mentions `REPORT.md`), with 40 section references to 25 distinct report sections; every referenced section exists (counts corrected 2026-11-25: an earlier version of this record and of §14.9 gave the 25 distinct sections as the tag count);
   - all 17 identifiers of the report's code index (§13.2) exist in `src/`;
   - all 32 test functions and 15 `src/` / `test/` paths cited in the report exist.
 - `git diff --stat 04eb336 dbb6bff -- src test lib foundry.toml` lists only `src/AMMPool.sol` (+17 / −1, M11-3). The same diff from `36ec9e3` is empty.
