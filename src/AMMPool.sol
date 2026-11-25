@@ -161,7 +161,9 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      ZeroAddress whichever position it is in. The four recipient checks (A3) catch only
     ///      these obvious mistakes; a wrong-but-valid address cannot be detected and is permanent.
     ///      LP name/symbol are constants (DECISIONS M3-1), so the signature is unchanged from M2.
-    constructor(address token0_, address token1_, address surplusRecipient_) ERC20("AMM Liquidity Provider", "AMM-LP") {
+    ///      They are returned by the `name()` / `symbol()` overrides below, so empty strings are
+    ///      passed to the OpenZeppelin constructor and nothing is stored (DECISIONS M11-3).
+    constructor(address token0_, address token1_, address surplusRecipient_) ERC20("", "") {
         if (token0_ == address(0) || token1_ == address(0)) revert ZeroAddress();
         if (token0_ == token1_) revert IdenticalTokens();
         if (token0_ > token1_) revert TokensNotSorted();
@@ -173,6 +175,20 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         token0 = token0_;
         token1 = token1_;
         surplusRecipient = surplusRecipient_;
+    }
+
+    /// @notice LP token name (DECISIONS M3-1): the constant "AMM Liquidity Provider".
+    /// @dev Returned as a constant instead of read from storage (DECISIONS M11-3). Declared `view`,
+    ///      not `pure`, so the ABI `stateMutability` stays as in OpenZeppelin `ERC20` (compiler
+    ///      warning 2018 accepted).
+    function name() public view override returns (string memory) {
+        return "AMM Liquidity Provider";
+    }
+
+    /// @notice LP token symbol (DECISIONS M3-1): the constant "AMM-LP".
+    /// @dev As `name()` (DECISIONS M11-3).
+    function symbol() public view override returns (string memory) {
+        return "AMM-LP";
     }
 
     // ------------------------------------------------------------------
