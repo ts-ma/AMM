@@ -547,12 +547,14 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
 
     /// @dev `_pullMeasured` with a known before-reading (DECISIONS M11-4): the caller guarantees
     ///      that only STATICCALLs happened since `balanceBefore` was read.
+    /// @custom:report docs/REPORT.md §5.2, §5.3 step 4
     function _pullFromKnown(address token, uint256 amount, uint256 balanceBefore) private returns (uint256 received) {
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         received = IERC20(token).balanceOf(address(this)) - balanceBefore;
     }
 
     /// @dev `_pullMeasured` that also returns the after-reading (DECISIONS M11-4).
+    /// @custom:report docs/REPORT.md §5.2, §5.3 step 4
     function _pullMeasuredEnd(address token, uint256 amount) private returns (uint256 received, uint256 balanceAfter) {
         uint256 balanceBefore = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
@@ -564,6 +566,7 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      its after-reading `endSecond` (only a return and STATICCALLs since); the first-pulled
     ///      token is read fresh, after the second transfer. Same comparisons and order as
     ///      `_checkInCallBalance` (token0 first).
+    /// @custom:report docs/REPORT.md §5.3 step 5, §5.4 (BI-2′)
     function _checkInCallBalanceLater(
         uint256 start0,
         uint256 start1,
