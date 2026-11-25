@@ -296,6 +296,14 @@ No same-harness gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.1
 
 Against the unchanged 492-test suite the three variants fail 16, 66 and 90 tests; apart from three ABI-list tests failed by the test adapter's extra entry point, every failure is in these guarantees. Among the tested variants, four reads is the lowest count that preserved this project's rules for surplus and deficit present before the call (the only case supported tokens can create [source, §9.6]); two reads is the lowest under the balance-minus-reserve rules; fewer reads were not tested. None was adopted; the production Pool is retained (student decision).
 
+**Three smaller changes (same method; each on its own branch from the code of §10.6, measured against a fresh baseline in the same harness; TEST_MATRIX §14.9).** All three keep the ABI and every deposit protection; the full suite plus the experiment's own tests passed on each variant, with no static or behavioural failure.
+
+| Change | Measured effect [gas] | Who pays | Recommendation |
+|---|---|---|---|
+| Later deposit reuses the Pool's own balance readings: 6 Pool + 4 payer `balanceOf` instead of 10 + 4 (counted from recorded calls) | −3,437 (ordinary tokens), −3,573 / −3,594 (§5.2 taxed token, either order); same shares, debits, reserves, events and errors, including the deficit error order. (A Pool with no payer-debit check at all, 10 + 0 reads, measures 613 less.) | Pool deployer: +243,957 per deployment (+1,132 B); ≈ 71 deposits to recover [estimate] | Sound, but it relies on no balance changing between reused readings (only read-only calls occur there); not in the submitted code |
+| Factory stores each pair once; `getPair` sorts the two addresses | `createPair` −22,238 | every paid on-chain `getPair`: +101 (sorted) / +111 (reversed order); break-even ≈ 220 / 200 lookups per pair [estimate] | Keep the current registry: lookups recur, the saving does not |
+| LP `name()` / `symbol()` return constants instead of reading storage | `createPair` −70,154, or a standalone deployment −73,358 (separate comparisons, not additive); each getter ≈ −2,700; Pool runtime −151 B | no cost measured | Best candidate; not in the submitted code (adoption needs a separate decision) |
+
 ## 12. Limitations
 
 Most important for users and LPs:
