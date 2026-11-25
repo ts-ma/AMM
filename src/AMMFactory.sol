@@ -17,8 +17,9 @@ contract AMMFactory {
     ///      Pools of the old Factory are not migrated (THREAT_MODEL T11, limitation 14).
     address public immutable surplusRecipient;
 
-    /// @notice Pool for a token pair; registered under both orderings, 0 if none exists.
-    mapping(address tokenA => mapping(address tokenB => address pool)) public getPair;
+    /// @dev EXPERIMENT (one entry per unordered pair, TEST_MATRIX §14.9): Pool for a sorted pair
+    ///      `(token0, token1)`, `token0 < token1`; read through `getPair`, which accepts either order.
+    mapping(address token0 => mapping(address token1 => address pool)) private _pairs;
 
     /// @notice Every Pool created, in creation order (U11).
     address[] public allPairs;
@@ -71,14 +72,20 @@ contract AMMFactory {
         if (tokenA == tokenB) revert IdenticalTokens();
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         if (token0.code.length == 0 || token1.code.length == 0) revert TokenHasNoCode();
-        if (getPair[token0][token1] != address(0)) revert PairExists();
+        if (_pairs[token0][token1] != address(0)) revert PairExists();
 
         pool = address(new AMMPool(token0, token1, surplusRecipient));
 
-        getPair[token0][token1] = pool;
-        getPair[token1][token0] = pool;
+        _pairs[token0][token1] = pool;
         allPairs.push(pool);
         emit PairCreated(token0, token1, pool, allPairs.length);
+    }
+
+    /// @notice Pool for a token pair in either order; 0 if none exists (also for identical tokens).
+    /// @dev EXPERIMENT: sorts, then reads the single entry. Same selector, mutability and return
+    ///      values as the former public mapping getter.
+    function getPair(address tokenA, address tokenB) external view returns (address pool) {
+        return tokenA < tokenB ? _pairs[tokenA][tokenB] : _pairs[tokenB][tokenA];
     }
 
     /// @notice Number of Pools created so far.
