@@ -209,21 +209,28 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
         if (p.recipient == address(0) || p.recipient == address(this)) revert InvalidRecipient();
         if (p.amount0RequestMax == 0 || p.amount1RequestMax == 0) revert ZeroAmount();
         uint256 supply = totalSupply();
+        uint256 poolStart0;
+        uint256 poolStart1;
         if (supply != 0) {
-            // Deficit entry check (M6-2) only on the later path: with supply == 0 both reserves
-            // are 0, so a deficit cannot exist on the initial path.
-            _checkNoDeficit();
+            // EXPERIMENT (snapshot reuse, TEST_MATRIX §14.9): the entry readings are the deficit
+            // check (M6-2), the BI-2′ start (M8-11) and the first transfer's before-reading.
+            // Production order kept: token0 read and checked, then token1 read and checked.
+            poolStart0 = IERC20(token0).balanceOf(address(this));
+            if (poolStart0 < reserve0) revert ReserveDeficit();
+            poolStart1 = IERC20(token1).balanceOf(address(this));
+            if (poolStart1 < reserve1) revert ReserveDeficit();
             // Terminal pool (DECISIONS M6-1): a zero reserve can only come from sync(); refuse
             // before any transfer instead of dividing by zero in the later-deposit arithmetic.
             if (reserve0 == 0 || reserve1 == 0) revert AMMMath.InsufficientLiquidity();
+        } else {
+            // Initial path unchanged (control): whole-call Pool snapshots.
+            poolStart0 = IERC20(token0).balanceOf(address(this));
+            poolStart1 = IERC20(token1).balanceOf(address(this));
         }
 
-        // Whole-call snapshots — after every check and before the first transfer. View calls
-        // only (STATICCALL), so no callback point and no balance change between these reads and
-        // the entry deficit check above. Pool side: BI-2′ (M8-11); payer side (always
-        // msg.sender): M8-3.
-        uint256 poolStart0 = IERC20(token0).balanceOf(address(this));
-        uint256 poolStart1 = IERC20(token1).balanceOf(address(this));
+        // Payer snapshots (always msg.sender, M8-3) — after every check and before the first
+        // transfer. View calls only (STATICCALL), so no callback point and no balance change
+        // between the Pool readings above and the first transfer.
         uint256 payerStart0 = IERC20(token0).balanceOf(msg.sender);
         uint256 payerStart1 = IERC20(token1).balanceOf(msg.sender);
 
@@ -238,12 +245,14 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
                 net0 = _pullMeasured(token0, p.amount0RequestMax);
                 net1 = _pullMeasured(token1, p.amount1RequestMax);
             }
+            // After the last token call that can move value (the second pull and its measurement).
+            _checkInCallBalance(poolStart0, poolStart1, net0, net1);
         } else {
-            (net0, net1) = _pullLater(p);
+            uint256 endSecond;
+            (net0, net1, endSecond) = _pullLater(p, poolStart0, poolStart1);
+            _checkInCallBalanceLater(poolStart0, poolStart1, net0, net1, p.token1First, endSecond);
         }
 
-        // After the last token call that can move value (the second pull and its measurement).
-        _checkInCallBalance(poolStart0, poolStart1, net0, net1);
         _checkPayerDebit(payerStart0, payerStart1, p.maxDebit0, p.maxDebit1);
 
         if (supply == 0) {
@@ -468,7 +477,13 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     ///      4. Pull the second token and measure n_s.
     ///      Reserves are > 0 here: `addLiquidity` rejects a terminal pool (M6-1) before calling.
     /// @custom:report docs/REPORT.md §5.3 steps 3–4
-    function _pullLater(IAMMPool.AddLiquidityParams calldata p) private returns (uint256 net0, uint256 net1) {
+    ///      EXPERIMENT (snapshot reuse): the first token's before-reading is its entry reading
+    ///      (`start_f`; only STATICCALLs since). The second token is read immediately before its
+    ///      own transfer; its after-reading is returned as `endSecond` for the BI-2′ check.
+    function _pullLater(IAMMPool.AddLiquidityParams calldata p, uint256 start0, uint256 start1)
+        private
+        returns (uint256 net0, uint256 net1, uint256 endSecond)
+    {
         uint256 r0 = reserve0;
         uint256 r1 = reserve1;
         uint256 amount0Max = p.amount0RequestMax;
@@ -498,20 +513,52 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
 
         // Steps 2–4: pull in the caller's order; re-plan the second token from the first net.
         if (p.token1First) {
-            net1 = _pullMeasured(token1, target1);
+            net1 = _pullFromKnown(token1, target1, start1);
             if (net1 != target1) {
                 target0 = Math.min(amount0Max, _mulDivSat(net1, r0, r1));
                 if (target0 == 0) revert InsufficientDepositAmount();
             }
-            net0 = _pullMeasured(token0, target0);
+            (net0, endSecond) = _pullMeasuredEnd(token0, target0);
         } else {
-            net0 = _pullMeasured(token0, target0);
+            net0 = _pullFromKnown(token0, target0, start0);
             if (net0 != target0) {
                 target1 = Math.min(amount1Max, _mulDivSat(net0, r1, r0));
                 if (target1 == 0) revert InsufficientDepositAmount();
             }
-            net1 = _pullMeasured(token1, target1);
+            (net1, endSecond) = _pullMeasuredEnd(token1, target1);
         }
+    }
+
+    /// @dev EXPERIMENT (snapshot reuse): `_pullMeasured` with a known before-reading.
+    function _pullFromKnown(address token, uint256 amount, uint256 balanceBefore) private returns (uint256 received) {
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        received = IERC20(token).balanceOf(address(this)) - balanceBefore;
+    }
+
+    /// @dev EXPERIMENT (snapshot reuse): `_pullMeasured` that also returns the after-reading.
+    function _pullMeasuredEnd(address token, uint256 amount) private returns (uint256 received, uint256 balanceAfter) {
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        balanceAfter = IERC20(token).balanceOf(address(this));
+        received = balanceAfter - balanceBefore;
+    }
+
+    /// @dev EXPERIMENT (snapshot reuse): BI-2′ on the later path. The second-pulled token's end is
+    ///      its after-reading `endSecond` (only a return and STATICCALLs since); the first-pulled
+    ///      token is read fresh, after the second transfer. Same comparisons and order as
+    ///      `_checkInCallBalance` (token0 first).
+    function _checkInCallBalanceLater(
+        uint256 start0,
+        uint256 start1,
+        uint256 net0,
+        uint256 net1,
+        bool token1First,
+        uint256 endSecond
+    ) private view {
+        uint256 end0 = token1First ? endSecond : IERC20(token0).balanceOf(address(this));
+        if (end0 < start0 || end0 - start0 < net0) revert InCallBalanceLoss();
+        uint256 end1 = token1First ? IERC20(token1).balanceOf(address(this)) : endSecond;
+        if (end1 < start1 || end1 - start1 < net1) revert InCallBalanceLoss();
     }
 
     /// @dev Later deposit, accounting part (after the payer check):

@@ -10,9 +10,11 @@ import {SnapshotReuseBase} from "./SnapshotReuseBase.sol";
 /// The only constants that differ between the baseline and the variant commit are the
 /// `LATER_POOL_READS_PER_TOKEN` expectation below (baseline 5 per token = 10; variant 3 = 6).
 contract SnapshotReuseCalls is SnapshotReuseBase {
-    /// @dev Pool `balanceOf(pool)` calls per token on a later deposit. Baseline: 5 (deficit check,
+    /// @dev Pool `balanceOf(pool)` calls per token on a later deposit. VARIANT: 3 (entry reading,
+    ///      after its own transfer, and either the before-reading of the second-pulled token or the
+    ///      end reading of the first-pulled token). Baseline commit: 5 (deficit check,
     ///      start snapshot, before and after its own transfer, end check).
-    uint256 internal constant LATER_POOL_READS_PER_TOKEN = 5;
+    uint256 internal constant LATER_POOL_READS_PER_TOKEN = 3;
     /// @dev Unchanged by the variant: payer reads per token (start, end) and the initial path.
     uint256 internal constant LATER_PAYER_READS_PER_TOKEN = 2;
     uint256 internal constant INIT_POOL_READS_PER_TOKEN = 4;
