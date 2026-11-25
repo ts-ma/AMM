@@ -665,6 +665,8 @@ Decision: option A (DECISIONS M8-9). These are single-scenario measurements, not
 
 ### 14.6 G02 — gas of every public function on the final code (2026-11-23, branch `m10-verification`)
 
+*Historical (code of `550bc80` = `04eb336`). Refreshed on the adopted production code `36ec9e3` in §14.10; three rows changed (`createPair`, both deployments).*
+
 Configuration verified with `forge config` immediately before measuring: `solc` 0.8.38, optimizer on, 200 runs, `evm_version = osaka`, `via_ir = false`, `isolate = true`, OpenZeppelin v5.7.0, forge 1.9.0. `src/` is identical to `550bc80` (the M8 acceptance). Harness: `test/gas/GasG02.t.sol` (committed for reproducibility; logs values, asserts nothing about gas); command `forge test --match-contract GasG02 -vv`. Two consecutive runs gave identical values.
 
 **Method.** One external call per test, `gasleft()` immediately before and after it. All arguments and contract references (params struct, token, Pool and account addresses held in test storage) are copied to locals before the first reading, so no test-contract `SLOAD` is inside the interval; the ABI encoding of the call is inside, the 21,000 intrinsic cost and calldata cost are not. Each measured call is a top-level call under `isolate = true`, so the state it touches is cold. Tier 0 `MockERC20` (18 decimals); Pool seeded by alice with (1000e18, 2000e18); alice is payer and recipient with non-zero token and LP balances and approvals of `type(uint256).max`. Single scenarios, not averages.
@@ -1081,10 +1083,42 @@ Standalone deployment and `createPair` each contain one Pool creation. They are 
 
 **Status.** Measured. No variant is adopted. DECISIONS.md is unchanged until the student decides; production adoption, merge and push each need separate approval. Report §11.4 summarises the three results.
 
+**Decision (student, 2026-11-25, DECISIONS M11-3).** All three are accepted as evidence. Experiments 1 and 2 are retained as experiments, not adopted. Experiment 3 is adopted locally on `m11-report` as commit `36ec9e3` (§14.10). Merge and push need separate approval.
+
 **Report-branch checks (2026-11-25, after this experiment).**
 - Report commit **`951d55c`** adds one compact table at the end of report §11.4 (no section renumbered). The report PDF was exported from `docs/REPORT.md` at `951d55c` (same method as §14.8: Markdown → HTML with the same stylesheet, Edge headless print, A4, 10 pt): **10 pages** (limit 10), SHA-256 `72c2700e3485a5f60e23a54784ab670d1dd74ae4df3f155bfbccb3a91fa37a11`.
 - Cross-references checked on that text: all 25 `docs/REPORT.md §…` references in `src/` name an existing report section, and every identifier in the report's code index (§13.2) exists in `src/`.
 - `git diff --stat 04eb336 951d55c -- src test lib foundry.toml` is empty: no production code, test, library or configuration change on `m11-report` after the accepted regression. Later commits on `m11-report` change only `docs/TEST_MATRIX.md`.
+
+### 14.10 Adoption of constant LP metadata and G02 refresh (2026-11-25, branch `m11-report`, commit `36ec9e3`)
+
+**Production change (DECISIONS M11-3).**
+- Commit **`36ec9e3`** (`refactor:`) changes only `src/AMMPool.sol`, by +17 / −1 lines. It is the experiment 3 change of §14.9 without the experiment comments.
+- `git diff --stat 04eb336 36ec9e3 -- src test lib foundry.toml` lists only `src/AMMPool.sol`.
+- No test was added or changed. The production suite already asserts both exact strings (`test/AMMPoolLiquidity.t.sol`, `assertEq(pool.name(), "AMM Liquidity Provider")` and `assertEq(pool.symbol(), "AMM-LP")`), and `AMMFactoryIntegration` asserts equal metadata and codehash for direct and Factory Pools.
+
+**Identity checks.**
+- The `AMMPool` ABI JSON (`forge inspect AMMPool abi --json`) is identical to the `04eb336` code. `name()` and `symbol()` stay `view`.
+- With `FOUNDRY_CBOR_METADATA=false FOUNDRY_BYTECODE_HASH=none`, the runtime bytecode of `AMMPool` and `AMMFactory` at `36ec9e3` is byte-identical to the measured variant `8296cae`. The paired deltas of §14.9 experiment 3 therefore apply to the production code.
+
+**Verification on `36ec9e3`** (the final production-code and test commit; configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`, forge 1.9.0):
+- `forge build`: successful. Its warnings include 2018 for the two `view` getters (accepted, M11-3) and the existing one in `test/AMMPoolMeasuredDeposit.t.sol`.
+- `forge test`: **492 passed, 0 failed, 55 suites**.
+- `FOUNDRY_FUZZ_RUNS=10000 forge test`: **492 passed, 0 failed, 55 suites**.
+
+**G02 refreshed on `36ec9e3`.** Same harness (`test/gas/GasG02.t.sol`, unchanged), command and method as §14.6; two runs gave identical values. Only three rows change. Every other row of §14.6 reproduces exactly (add 232,004 / 108,814 / 109,052; remove 94,105 / 94,144; swap 82,539 / 82,587; `getAmountOut` 8,474; `getReserves` 7,376; `sync` 40,067 / 44,774; `skim` 101,777 / 39,905; LP `transfer` / `approve` / `transferFrom` 54,879 / 49,430 / 57,659; calibration 5,479).
+
+| Function | §14.6 (code `550bc80` = `04eb336`) | `36ec9e3` | Δ |
+|---|---:|---:|---:|
+| `AMMFactory.createPair` | 2,316,864 | 2,246,710 | −70,154 |
+| deployment `new AMMPool` | 2,422,397 | 2,349,039 | −73,358 |
+| deployment `new AMMFactory` | 2,838,448 | 2,792,731 | −45,717 |
+| `AMMPool` runtime / initcode | 10,553 / 11,709 B | 10,402 / 11,497 B | −151 / −212 B |
+| `AMMFactory` runtime / initcode | 12,770 / 12,968 B | 12,558 / 12,756 B | −212 / −212 B |
+
+- The `createPair` and Pool-deployment deltas equal the paired deltas of §14.9 experiment 3.
+- The Factory deployment delta differs from the experiment harness (−45,729) by 12 gas. This is a harness difference: G02 deploys the Factory from a different test context. It was not isolated further.
+- **Historical experiment deltas (§14.5, §14.7, §14.8, §14.9) stay tied to their own paired baselines**, all measured on the code before `36ec9e3`. They are not restated against the refreshed G02 values.
 
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
