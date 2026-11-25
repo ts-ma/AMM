@@ -178,15 +178,15 @@ contract AMMPool is ERC20, ReentrancyGuardTransient {
     }
 
     /// @notice LP token name (DECISIONS M3-1): the constant "AMM Liquidity Provider".
-    /// @dev Returned as a constant instead of read from storage (DECISIONS M11-3). Declared `view`,
-    ///      not `pure`, so the ABI `stateMutability` stays as in OpenZeppelin `ERC20` (compiler
-    ///      warning 2018 accepted).
-    function name() public view override returns (string memory) {
+    /// @dev Returned as a constant instead of read from storage (DECISIONS M11-3). Declared `pure`
+    ///      (DECISIONS M11-4): selector and return value unchanged; the ABI records `pure`.
+    function name() public pure override returns (string memory) {
         return "AMM Liquidity Provider";
     }
 
     /// @notice LP token symbol (DECISIONS M3-1): the constant "AMM-LP".
-    /// @dev As `name()` (DECISIONS M11-3).
+    /// @dev Returned as a constant (DECISIONS M11-3). Kept `view`, as in OpenZeppelin `ERC20`
+    ///      (DECISIONS M11-4; compiler warning 2018 accepted).
     function symbol() public view override returns (string memory) {
         return "AMM-LP";
     }
