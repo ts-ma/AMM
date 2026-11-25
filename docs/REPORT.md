@@ -110,7 +110,7 @@ State: reserves `(10,000, 20,000)`, `S = ⌊√(2·10⁸)⌋ = 14,142`; token1 c
 | ① most the Pool may request | 1,000 | 2,500 | caller |
 | ② planned request at the pool ratio | 1,000 | 2,000 | `_pullLater` step 2 |
 | ③ payer's actual debit (≤ `maxDebit`) | 1,000 | 2,000 | `_checkPayerDebit` |
-| ④ Pool's measured receipt `n_i` | 1,000 | 1,800 | `_pullMeasured` (200 burned as tax) |
+| ④ Pool's measured receipt `n_i` | 1,000 | 1,800 | `_pullFromKnown` for token0, `_pullMeasuredEnd` for token1 (200 burned as tax) |
 | ⑤ candidate share count per token `⌊n_i·S/r_i⌋` | 1,414 | 1,272 | `_mintLater` |
 | ⑥ **LP minted** `σ` = the smaller candidate | **1,272** (one amount for the deposit) | | `_mintLater` |
 | ⑦ matched part `⌈σ·r_i/S⌉` | 900 | 1,799 | `_mintLater` |
@@ -128,8 +128,8 @@ An immediate full redemption returns `(907, 1,798)` [test] against a payment of 
 1. **Checks** (`addLiquidity`): deadline, recipient, non-zero caps; for a non-empty pool, no deficit (token0's balance read and checked, then token1's) and no zero reserve.
 2. **Snapshots** of the Pool's and the payer's balances of both tokens. A later deposit reuses the Pool readings of step 1 (only read-only calls in between): 6 Pool + 4 payer reads [test] `test/AMMPoolSnapshotReuseCalls.t.sol`.
 3. **Step 2** (`_pullLater`): the largest pair at the pool ratio within both caps, rounded down. The exact 512-bit product is formed once, so huge caps never overflow.
-4. **Pull and measure** the first token (its before-balance is its reading from step 1); only if it delivered a different amount than planned, re-plan the second token from what arrived; then pull and measure the second token.
-5. **After the last transfer**: BI-2′ (`_checkInCallBalance`, `addLiquidity` only; a later deposit uses the second token's after-balance as its end): from the start snapshot to the end, each Pool balance rose by at least this call's own measured receipt, so no foreign removal hides inside the call; then the payer-debit bound (`_checkPayerDebit`).
+4. **Pull and measure** the first token (`_pullFromKnown`: its before-balance is its reading from step 1); only if it delivered a different amount than planned, re-plan the second token from what arrived; then pull and measure the second token (`_pullMeasuredEnd`).
+5. **After the last transfer**: BI-2′ (`addLiquidity` only; initial deposit `_checkInCallBalance`, later deposits `_checkInCallBalanceLater`, reusing the second transfer's closing balance and rereading the first token): from the start snapshot to the end, each Pool balance rose by at least this call's own measured receipt, so no foreign removal hides inside the call; then the payer-debit bound (`_checkPayerDebit`).
 6. **Shares and effects** (`_mintLater`): `σ`, `minShares`, checked `S + σ`, the excess bound, then `reserve_i += n_i` (excess included) and mint.
 
 ### 5.4 What each protection promises
@@ -243,13 +243,13 @@ Unit tests use exact values from independent models; fuzz tests cover the docume
 
 ### 10.6 Final regression
 
-Final code and tests: commit `1ab26ec`. Against the earlier regression commit `04eb336` it changes `src/AMMPool.sol` (constant LP metadata with `name()` declared `pure`; snapshot reuse on a later deposit) and `src/AMMFactory.sol` (one registry entry per pair), §11.2, and adds their tests and the comparison harness. Compiled ABI against `04eb336`: the Pool differs only in `name()`, now `pure`; the Factory is identical. `src/`, `test/`, `lib/` and `foundry.toml` are unchanged in every later commit of this branch. Experimental contracts (§11.4) are not part of this run. Commands: `forge build`; `forge test`; `FOUNDRY_FUZZ_RUNS=10000 forge test`. Result: **527 tests in 59 suites passed, 0 failed**, in both runs (invariant suites use their inline 256 × 500 setting). Configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`; forge 1.9.0.
+Final code and tests: commit `e951544` (after `1ab26ec` only comment tags; same bytecode and gas). Against the earlier regression commit `04eb336` it changes `src/AMMPool.sol` (constant LP metadata with `name()` declared `pure`; snapshot reuse on a later deposit) and `src/AMMFactory.sol` (one registry entry per pair), §11.2, and adds their tests and the comparison harness. Compiled ABI against `04eb336`: the Pool differs only in `name()`, now `pure`; the Factory is identical. `src/`, `test/`, `lib/` and `foundry.toml` are unchanged in every later commit of this branch. Experimental contracts (§11.4) are not part of this run. Commands: `forge build`; `forge test`; `FOUNDRY_FUZZ_RUNS=10000 forge test`. Result: **527 tests in 59 suites passed, 0 failed**, in both runs (invariant suites use their inline 256 × 500 setting). Configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`; forge 1.9.0.
 
 ## 11. Gas
 
 ### 11.1 Measured baseline
 
-[gas] `test/gas/GasG02.t.sol` on the code of §10.6 (`1ab26ec`): one call per test, arguments prepared outside the measured interval, cold state (`isolate = true`); single scenarios, for comparisons inside this project only.
+[gas] `test/gas/GasG02.t.sol` on the code of §10.6: one call per test, arguments prepared outside the measured interval, cold state (`isolate = true`); single scenarios, for comparisons inside this project only.
 
 | Call | Gas | Call | Gas |
 |---|---:|---|---:|
@@ -269,14 +269,13 @@ Protection has a price [gas]. Before §11.2 (TEST_MATRIX §14.5: 108,789) a late
 | Adopted | A later deposit reuses the Pool's balance readings (6 + 4 reads instead of 10 + 4; §5.3); the Factory stores each pair once and `getPair` sorts | Table 11.2 | every later deposit is cheaper; relies on only read-only calls between a reading and its reuse |
 | Rejected | VP: `uint112` reserves in one storage slot (as Uniswap V2) | ≈ −4,300 per add/remove/swap, −21,567 on the first deposit, but +159,273 per deployment | caps reserves at `2¹¹²` (13 range tests fail; a new error case and range rules would be needed) |
 
-The LP name is fixed and `name()` is declared `pure`. Its selector and return value are unchanged. The compiled ABI now records `pure` for `name()` and `view` for `symbol()`. We compared the combined implementation with commit `04eb336` using the same benchmark harness. Table 11.2 reports the measured gas change for each operation [gas] (cold calls, finite `maxDebit`; Δ = final − `04eb336`, negative = saving; full matrix TEST_MATRIX §14.11).
+The LP name is fixed and `name()` is declared `pure`. Its selector and return value are unchanged. The compiled ABI now records `pure` for `name()` and `view` for `symbol()`. We compared the combined implementation with commit `04eb336` using the same benchmark harness. Table 11.2 reports the measured gas change for each operation [gas] (finite `maxDebit`; Δ = final − `04eb336`, negative = saving; full matrix TEST_MATRIX §14.11). Standalone calls were measured from a cold start. Repeated-lookup scenarios measured the second call in the same transaction, after the first lookup had accessed the Factory and its storage.
 
 | Operation (Table 11.2) | `04eb336` | final | Δ | % |
 |---|---:|---:|---:|---:|
-| deploy `AMMFactory` | 2,840,966 | 3,058,070 | +217,104 | +7.6 |
-| deploy `AMMPool` directly | 2,424,914 | 2,595,417 | +170,503 | +7.0 |
-| `createPair`, first / later pair (Pool deployment included) | 2,316,852 / 2,299,740 | 2,451,519 / 2,434,407 | +134,667 | +5.8 / +5.9 |
-| `addLiquidity` initial | 231,973 | 231,969 | −4 | −0.0 |
+| deploy `AMMFactory` / `AMMPool` directly | 2,840,966 / 2,424,914 | 3,058,070 / 2,595,417 | +217,104 / +170,503 | +7.6 / +7.0 |
+| `createPair`: first pair / a second, different pair (Pool deployment included) | 2,316,852 / 2,299,740 | 2,451,519 / 2,434,407 | +134,667 each | +5.8 / +5.9 |
+| `addLiquidity` initial | 231,973 | 231,969 | −4 | <0.01 |
 | later deposit, ordinary, token0 / token1 first | 108,158 / 108,180 | 104,721 / 104,722 | −3,437 / −3,458 | −3.2 |
 | later deposit, §5.2 taxed, taxed second / first | 193,456 / 193,847 | 189,883 / 190,253 | −3,573 / −3,594 | −1.8 / −1.9 |
 | `getPair` sorted / reversed: cold; repeated in one tx; reversed after sorted | 5,975; 1,255; 3,255 | 6,076 / 6,086; 1,356 / 1,366; 1,366 | +101 / +111; −1,889 | +1.7 … +8.8; −58.0 |
@@ -284,7 +283,7 @@ The LP name is fixed and `name()` is declared `pure`. Its selector and return va
 | controls: `swapExactInput` / `removeLiquidity` | 82,539 / 94,105 | 82,540 / 94,105 | +1 / 0 | 0.0 |
 | runtime bytes, Pool / Factory | 10,553 / 12,770 | 11,534 / 13,780 | +981 / +1,010 | +9.3 / +7.9 |
 
-The per-pool break-even estimate uses the measured cost of pair creation, the initial deposit and subsequent deposits [estimate]: a Pool created through a deployed Factory, one initial deposit and `N` ordinary later deposits (token0 first) give Δ(N) = 134,667 − 4 − 3,437·N: +100,293 at N = 10, −209,037 at N = 100, no dearer from **N = 40**. With a new Factory (+217,104): +317,397 and +8,067, break-even N = 103. Paid on-chain `getPair` calls add their Δ per lookup.
+The per-pool break-even estimate uses the measured cost of pair creation, the initial deposit and subsequent deposits [estimate]: a Pool created through a deployed Factory (first or later pair: same Δ), one initial deposit and `N` ordinary later deposits (token0 first) give Δ(N) = 134,667 − 4 − 3,437·N: +100,293 at N = 10, −209,037 at N = 100, no dearer from **N = 40**. With a new Factory (+217,104): +317,397 and +8,067, break-even N = 103. Paid on-chain `getPair` calls add their Δ per lookup.
 
 VU (`unchecked` on arithmetic proven safe) saved 263–534 gas per state-changing call; it was not adopted, because checked arithmetic turns a mistake in those proofs, or in a later edit, into a revert instead of a silent wrap. Other measured variants are in TEST_MATRIX §14.
 
@@ -315,7 +314,7 @@ No same-harness gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.1
 
 Against the unchanged 492-test suite the three variants fail 16, 66 and 90 tests; apart from three ABI-list tests failed by the test adapter's extra entry point, every failure is in these guarantees. Among the tested variants, four reads is the lowest count that preserved this project's rules for surplus and deficit present before the call (the only case supported tokens can create [source, §9.6]); two reads is the lowest under the balance-minus-reserve rules; fewer reads were not tested. None was adopted; the production Pool is retained (student decision).
 
-**Three smaller changes, first measured one at a time** (each on its own branch from `04eb336`; TEST_MATRIX §14.9) [gas]. (1) A later deposit reuses the Pool's own balance readings, 6 Pool + 4 payer `balanceOf` instead of 10 + 4: −3,437 (ordinary tokens), −3,573 / −3,594 (§5.2 taxed token), +243,957 per Pool deployment (≈ 71 deposits to recover on its own [estimate]), same outcomes and errors in the tested cases; a Pool with no payer-debit check (10 + 0 reads) measures 613 less than 6 + 4. (2) One Factory entry per pair: `createPair` −22,238; `getPair` as in Table 11.2. (3) Constant LP metadata: `createPair` −70,154, a standalone deployment −73,358, each getter ≈ −2,700. All three were adopted (student decision); Table 11.2 measures them together (deployment costs do not simply add up).
+**Three smaller changes, first measured one at a time** (each on its own branch from `04eb336`; TEST_MATRIX §14.9) [gas]. (1) Reused Pool readings in a later deposit (6 + 4 reads instead of 10 + 4): −3,437 (ordinary tokens), −3,573 / −3,594 (§5.2 taxed token), +243,957 per Pool deployment (≈ 71 deposits to recover on its own [estimate]), same outcomes and errors in the tested cases; a Pool with no payer-debit check (10 + 0 reads) measures 613 less than 6 + 4. (2) One Factory entry per pair: `createPair` −22,238; `getPair` as in Table 11.2. (3) Constant LP metadata: `createPair` −70,154, a standalone deployment −73,358, each getter ≈ −2,700. All three were adopted (student decision) and measured together in Table 11.2.
 
 ## 12. Limitations
 
@@ -341,7 +340,7 @@ Most important for users and LPs:
 
 ### 13.1 Development history
 
-M1 toolchain · M2 Pool skeleton and maths · M3 initial deposit and lock · M4 later deposit and withdrawal · M5 swap · M6 `sync`/`skim`/deficits · M7 Factory · M8 measured deposit · M10 verification and gas · M11 this report (M9, a protocol fee, was out of scope). Full records: `docs/MILESTONES.md`, `docs/DECISIONS.md`, `docs/TEST_MATRIX.md`, `docs/THREAT_MODEL.md`, `docs/REPORT_NOTES.md`.
+M1 toolchain · M2 Pool skeleton and maths · M3 initial deposit and lock · M4 later deposit and withdrawal · M5 swap · M6 `sync`/`skim`/deficits · M7 Factory · M8 measured deposit · M10 verification and gas · M11 this report (M9, a protocol fee, was out of scope). Full records in `docs/`: `MILESTONES`, `DECISIONS`, `TEST_MATRIX`, `THREAT_MODEL`, `REPORT_NOTES` (`.md`).
 
 ### 13.2 Code → report index
 
@@ -353,9 +352,8 @@ Each declaration below carries a NatSpec tag `@custom:report docs/REPORT.md §�
 | `AMMMath.initialShares`, `AMMPool._update` | 3.2, 9.4 |
 | `AMMFactory.createPair` | 4.1 |
 | `AMMPool._pullMeasured`, `_pushMeasured`, `getReserves` | 4.2, 4.4, 6.2 |
-| `AMMPool.addLiquidity`, `_pullLater`, `_mintLater`, `_checkInCallBalance`, `_checkPayerDebit` | 5 |
-| `AMMPool.removeLiquidity` | 6 |
-| `AMMPool.swapExactInput` | 7 |
+| `AMMPool.addLiquidity`, `_pullLater`, `_pullFromKnown`, `_pullMeasuredEnd`, `_mintLater`, `_checkInCallBalance`, `_checkInCallBalanceLater`, `_checkPayerDebit` | 5 |
+| `AMMPool.removeLiquidity`; `AMMPool.swapExactInput` | 6; 7 |
 | `AMMPool.sync`, `skim`, `_checkNoDeficit` | 8 |
 
 ### 13.3 References

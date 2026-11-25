@@ -1151,7 +1151,7 @@ Cross-token final reconciliation on the later path stays covered by the unchange
 
 **Trace check** (`-vvvv` text trace of the measured call, `balanceOf` counted by account argument): final code, later ORD token0 / token1 first and L46 taxed second / first: 6 Pool + 4 payer, 2 `transferFrom`; initial 8 + 4. `04eb336`: later 10 + 4, initial 8 + 4. Agrees with the recorded-access tests.
 
-**Comparison method.** `test/gas/GasM11Combined.t.sol` at `1ab26ec` was copied unchanged into a detached worktree at `04eb336` (SHA-256 `dc8e9756…0ced` on both sides). Both sides ran `forge test --match-contract "GasM11Combined|GasG02" -vv` with forge 1.9.0 and the same `forge config` (solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`). G02 rows use `test/gas/GasG02.t.sol`, unchanged since `04eb336`. Every measured call is a top-level call (cold); in-transaction `getPair` pairs run inside one probe call. Fixtures as §14.9 (ORD, L46, INIT). Δ = final − baseline; negative = saving.
+**Comparison method.** `test/gas/GasM11Combined.t.sol` at `1ab26ec` was copied unchanged into a detached worktree at `04eb336` (SHA-256 `dc8e9756…0ced` on both sides). Both sides ran `forge test --match-contract "GasM11Combined|GasG02" -vv` with forge 1.9.0 and the same `forge config` (solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`). G02 rows use `test/gas/GasG02.t.sol`, unchanged since `04eb336`. Standalone calls were measured from a cold start (one top-level call under `isolate = true`). Repeated-lookup scenarios measured the second call in the same transaction, inside one probe call, after the first lookup had accessed the Factory and its storage; that warm slot is why a reversed lookup after a sorted one costs 1,889 less with one entry per pair. Fixtures as §14.9 (ORD, L46, INIT). Δ = final − baseline; negative = saving.
 
 | Operation [measured] | `04eb336` | final `1ab26ec` | Δ | % |
 |---|---:|---:|---:|---:|
@@ -1159,7 +1159,7 @@ Cross-token final reconciliation on the later path stays covered by the unchange
 | deploy `AMMPool` (direct) | 2,424,914 | 2,595,417 | +170,503 | +7.03 |
 | `createPair` first (`allPairs` 0 → 1) | 2,316,852 | 2,451,519 | +134,667 | +5.81 |
 | `createPair` subsequent (1 → 2) | 2,299,740 | 2,434,407 | +134,667 | +5.86 |
-| `addLiquidity` initial (token0 first) | 231,973 | 231,969 | −4 | −0.00 |
+| `addLiquidity` initial (token0 first) | 231,973 | 231,969 | −4 | <0.01 |
 | later ORD, token0 first, finite `maxDebit` | 108,158 | 104,721 | −3,437 | −3.18 |
 | later ORD, token1 first, finite `maxDebit` | 108,180 | 104,722 | −3,458 | −3.20 |
 | later L46 (§5.2 taxed), taxed second | 193,456 | 189,883 | −3,573 | −1.85 |
@@ -1177,26 +1177,28 @@ Cross-token final reconciliation on the later path stays covered by the unchange
 | runtime `AMMPool` / `AMMFactory` (B) | 10,553 / 12,770 | 11,534 / 13,780 | +981 / +1,010 | +9.30 / +7.91 |
 | initcode `AMMPool` / `AMMFactory` (B) | 11,709 / 12,968 | 12,657 / 13,978 | +948 / +1,010 | +8.10 / +7.79 |
 
-The Pool deployment is contained in `createPair`; the three creation rows are separate comparisons, not additive.
+The Pool deployment is contained in `createPair`; the three creation rows are separate comparisons, not additive. **Factory state for the two `createPair` rows** (`-vvvvv` trace, both ends): "first" uses the empty Factory `factory`; "subsequent" uses `seeded`, in whose `setUp` `createPair(a, b)` succeeded (`PairCreated`, `pairCount` 1), and the measured call creates the different pair `(a, c)` (`PairCreated`, `pairCount` 2). The absolute values differ (first 2,316,852 → 2,451,519; second pair 2,299,740 → 2,434,407); the delta is the same, +134,667, in both.
 
 **G02 on the final code** (same harness and method as §14.6 / §14.10), `04eb336` → `1ab26ec`: `addLiquidity` initial 232,004 → 232,000 (−4); later token0 binds 108,814 → 105,377 (−3,437); later token1 binds, token1First 109,052 → 105,594 (−3,458); `swapExactInput` 82,539 / 82,587 → 82,540 / 82,588 (+1 each); `createPair` 2,316,864 → 2,451,531 (+134,667); deploy `AMMPool` 2,422,397 → 2,592,900 (+170,503); deploy `AMMFactory` 2,838,448 → 3,055,552 (+217,104). Unchanged: `removeLiquidity` 94,105 / 94,144, `getAmountOut` 8,474, `getReserves` 7,376, `sync` 40,067 / 44,774, `skim` 101,777 / 39,905, LP `transfer` 54,879, `approve` 49,430, `transferFrom` 57,659, calibration `balanceOf` 5,479.
 
-**Interaction, not additivity.** The single-experiment Pool deployment deltas (+243,957, −73,358; §14.9) sum to +170,599; the combination measures +170,503. `createPair`: +243,957 − 70,154 − 22,238 = +151,565 summed, +134,667 measured. The combined values above supersede the sums.
+**Interaction, not additivity.** The single-experiment deltas of the direct Pool deployment (+243,957 and −73,358; §14.9) sum to +170,599; the combination measures +170,503. For `createPair` only the combined value, +134,667, is used; it was measured directly.
 
 **Per-pool scenario [estimate from the measured entries above].** Create a Pool through an already deployed Factory, one initial deposit, then `N` ordinary later deposits, token0 first, finite `maxDebit`:
 Δ(N) = Δ`createPair` + Δinitial + N · Δlater = +134,667 − 4 − 3,437 N.
-- N = 10: +100,293. N = 100: −209,037. Smallest N with Δ(N) ≤ 0: **N = 40** (N = 39: +620; N = 40: −2,817). The same with `createPair` subsequent (equal Δ).
+- N = 10: +100,293. N = 100: −209,037. Smallest N with Δ(N) ≤ 0: **N = 40** (N = 39: +620; N = 40: −2,817). This applies to both a Factory's first pair and a later, different pair, because both `createPair` deltas are +134,667.
 - Including the deployment of a new Factory (+217,104, once): N = 10: +317,397; N = 100: +8,067; break-even **N = 103** (N = 102: +1,193).
 - Paid on-chain `getPair` calls add per lookup: +101 (sorted, cold or repeated), +111 (reversed), −1,889 for a reversed lookup after a sorted one in the same transaction. Off-chain queries are free.
 - The earlier "≈ 71 deposits" (§14.9 experiment 1) was the snapshot-reuse experiment alone; it is superseded for the final code.
 
-**Verification on `1ab26ec`** (the final production-code and test commit):
+**Verification on `1ab26ec`** (the code and test commit measured above):
 - `forge build --force`: successful; warnings 2018 for `symbol()` (accepted, M11-4) and the existing one in `test/AMMPoolMeasuredDeposit.t.sol`.
 - `forge test`: **527 passed, 0 failed, 59 suites** (492 + 3 Factory lookup + 5 call-count + 8 behaviour + 19 combined-harness tests; 4 new suites).
 - `FOUNDRY_FUZZ_RUNS=10000 forge test`: **527 passed, 0 failed, 59 suites**.
 - `git diff --stat 04eb336 1ab26ec -- src lib foundry.toml` lists only `src/AMMFactory.sol` and `src/AMMPool.sol`.
 
-**Final report export (2026-11-25).** The report PDF was exported from `docs/REPORT.md` at **`282a8ef`** (method as §14.10: Markdown → HTML, Edge headless print, A4, 10 pt, same stylesheet). Result: **10 pages** (limit 10), SHA-256 `0e0846c1a30f5790fb842a3bbf4225b280202406d5cf19b03aecab1364ddf2f1`. The introduction of Table 11.2 is on the table's page (page 8). To stay within 10 pages, §11.4's single-experiment table became one paragraph with the same historical values, and two §11.1/§11.4 paragraphs were shortened. References checked in both directions on that text: 22 `@custom:report` tag lines in `src/` (`AMMPool.sol` 16, `AMMFactory.sol` 2, `libraries/AMMMath.sol` 3, `interfaces/IAMMPool.sol` 1) with 40 section references to 25 distinct sections, all present; all 17 identifiers of §13.2 exist in `src/`; all 32 test functions and 17 `src/` / `test/` paths cited exist. `git diff --stat 1ab26ec 282a8ef -- src test lib foundry.toml` is empty. The export from `dbb6bff` (§14.10) is superseded.
+**Final code `e951544` (2026-11-25, review follow-up).** Comment-only commit after `1ab26ec`: `@custom:report` tags on `_pullFromKnown`, `_pullMeasuredEnd` and `_checkInCallBalanceLater`, the functions a later deposit runs instead of `_pullMeasured` and `_checkInCallBalance` (report §5.2, §5.3, §13.2). Runtime bytecode without CBOR metadata (`FOUNDRY_CBOR_METADATA=false FOUNDRY_BYTECODE_HASH=none forge inspect … deployedBytecode`) is identical to `1ab26ec` for `AMMPool` (SHA-256 `51bda0d1…7651`) and `AMMFactory` (`b39fe878…a924`); `GasM11Combined` and `GasG02` rerun on `e951544` reproduce all 42 values above exactly. `forge build --force`: successful. `forge test`: **527 passed, 0 failed, 59 suites**. `FOUNDRY_FUZZ_RUNS=10000 forge test`: **527 passed, 0 failed, 59 suites**.
+
+**Report export from `282a8ef` (2026-11-25; superseded by the export below).** The report PDF was exported from `docs/REPORT.md` at **`282a8ef`** (method as §14.10: Markdown → HTML, Edge headless print, A4, 10 pt, same stylesheet). Result: **10 pages** (limit 10), SHA-256 `0e0846c1a30f5790fb842a3bbf4225b280202406d5cf19b03aecab1364ddf2f1`. The introduction of Table 11.2 is on the table's page (page 8). To stay within 10 pages, §11.4's single-experiment table became one paragraph with the same historical values, and two §11.1/§11.4 paragraphs were shortened. References checked in both directions on that text: 22 `@custom:report` tag lines in `src/` (`AMMPool.sol` 16, `AMMFactory.sol` 2, `libraries/AMMMath.sol` 3, `interfaces/IAMMPool.sol` 1) with 40 section references to 25 distinct sections, all present; all 17 identifiers of §13.2 exist in `src/`; all 32 test functions and 17 `src/` / `test/` paths cited exist. `git diff --stat 1ab26ec 282a8ef -- src test lib foundry.toml` is empty. The export from `dbb6bff` (§14.10) is superseded.
 
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
