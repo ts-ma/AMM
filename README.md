@@ -4,7 +4,7 @@ Coursework project for Blockchains and Distributed Ledgers: a constant-product a
 
 ## Where to start
 
-- **Report:** [docs/REPORT.md](docs/REPORT.md). The submitted PDF is exported from commit `43ae63d` (10 pages).
+- **Report:** [docs/REPORT.md](docs/REPORT.md). The submitted PDF is exported from commit `25a415e` (10 pages).
 - **Final regression and gas comparison:** [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md) §14.11. Final code `e951544`: 527 tests in 59 suites passed with `forge test` and with `FOUNDRY_FUZZ_RUNS=10000 forge test`.
 - **Design records:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DECISIONS.md](docs/DECISIONS.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/MILESTONES.md](docs/MILESTONES.md).
 - **Talk plan:** [docs/TALK.md](docs/TALK.md).
