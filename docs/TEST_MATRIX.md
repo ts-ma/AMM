@@ -1120,6 +1120,16 @@ Standalone deployment and `createPair` each contain one Pool creation. They are 
 - The Factory deployment delta differs from the experiment harness (−45,729) by 12 gas. This is a harness difference: G02 deploys the Factory from a different test context. It was not isolated further.
 - **Historical experiment deltas (§14.5, §14.7, §14.8, §14.9) stay tied to their own paired baselines**, all measured on the code before `36ec9e3`. They are not restated against the refreshed G02 values.
 
+**Final report export (2026-11-25).**
+- The report PDF was exported from `docs/REPORT.md` at **`dbb6bff`**. Method as §14.8: Markdown → HTML, Edge headless print, A4, 10 pt. One stylesheet rule was added, `p:has(+ table) { break-after: avoid; }`, so a paragraph that introduces a table stays on the table's page.
+- Result: **10 pages** (limit 10), SHA-256 `bf3f3d543fb1c16d9e571e39c7da3591281df2e990cca798f809c20514e94370`. The introduction of the §11.4 "three smaller changes" table is on the same page as the table (page 9).
+- References checked in both directions on that text:
+  - all 25 `docs/REPORT.md §…` tags in `src/` name an existing report section;
+  - all 17 identifiers of the report's code index (§13.2) exist in `src/`;
+  - all 32 test functions and 15 `src/` / `test/` paths cited in the report exist.
+- `git diff --stat 04eb336 dbb6bff -- src test lib foundry.toml` lists only `src/AMMPool.sol` (+17 / −1, M11-3). The same diff from `36ec9e3` is empty.
+- The earlier export from `951d55c` (§14.9) is superseded.
+
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
 Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
