@@ -896,6 +896,191 @@ The refund comes from the Router clearing its balances and approvals back to 0. 
 - `git diff --stat 04eb336 b4a2c74 -- src test lib foundry.toml` is empty: no production code, test, library or configuration change on `m11-report` after the accepted regression.
 - The report PDF was exported from `docs/REPORT.md` at **`b4a2c74`** (Edge headless print, A4, 10 pt, 9 pages). Later commits on `m11-report` do not change `docs/REPORT.md`.
 
+### 14.9 M11 local gas experiments: snapshot reuse, one registry entry per pair, constant LP metadata (2026-11-25; isolated experiments, no production change)
+
+**Baseline, branches and commits.** Three independent local branches, each created from **`04eb336`** (the accepted production regression). Worktrees are in the session scratchpad; nothing is merged or pushed. Each branch has two commits:
+- commit 1 (`test:`) adds the experiment harness and outcome tests and runs them on the unchanged production code (the fresh baseline);
+- commit 2 (`experiment:`) changes only `src/` (experiment 1 also updates one expected-count constant, stated below).
+
+| Experiment | Branch | Commit 1 (baseline) | Commit 2 (variant) | `src/` diff vs `04eb336` |
+|---|---|---|---|---|
+| 1 Snapshot reuse on a later deposit | `m11-exp-snapshot-reuse` | `c313d6b` | `9ae671a` | `src/AMMPool.sol` +64 / −17 |
+| 2 One Factory entry per unordered pair | `m11-exp-factory-pair` | `7ee21c5` | `83bdece` | `src/AMMFactory.sol` +12 / −5 |
+| 3 Constant LP metadata | `m11-exp-lp-metadata` | `cb58d5b` | `8296cae` | `src/AMMPool.sol` +13 / −1 |
+
+`lib/`, `foundry.toml` and every pre-existing test file are unchanged on all three branches.
+
+**Configuration** (`forge config` in each worktree): solc 0.8.38, optimizer on, 200 runs, `evm_version = osaka`, `via_ir = false`, `isolate = true` (`FOUNDRY_ISOLATE` unset), OpenZeppelin v5.7.0, forge 1.9.0 (`6056c58`).
+
+**Method.**
+- Gas uses the G02 method (§14.6). Every argument is a local before the first `gasleft()`. Each test makes one top-level call under `isolate = true`, so the state it touches is cold. The ABI encoding is inside the interval; the 21,000 base cost and the calldata cost are not. Refunds are not subtracted.
+- Each harness is byte-identical on commit 1 and commit 2. Commands: `forge test --match-contract GasSnapshotReuse|GasFactoryPair|GasLpMetadata -vv`. Each was run twice per commit, with identical values.
+- Sizes come from `forge build --sizes`.
+- Call counts come from Foundry's recorded account accesses (`vm.startStateDiffRecording`), run in separate tests and never inside a gas interval. Calls are classified by token target, caller, selector and, for `balanceOf`, the account argument (Pool, payer, other). The ORD token0-first deposit was cross-checked once against the `-vvvv` text trace.
+- The full suite (`forge test`, default fuzz runs) was run on both commits of every branch. Experiment 1 was also run with `FOUNDRY_FUZZ_RUNS=10000`. These totals include each branch's own experiment tests. They are **separate from the historical production regression** (492 tests in 55 suites on `04eb336`, report §10.6), which was not rerun on `m11-report`.
+
+| Branch | Commit 1 (production code) | Commit 2 (variant) | Variant, 10,000 fuzz runs |
+|---|---|---|---|
+| snapshot reuse | 512 / 512, 58 suites (492 project + 20 experiment) | 512 / 512 | 512 / 512 |
+| factory pair | 504 / 504, 57 suites (492 + 12) | 504 / 504 | not run |
+| LP metadata | 499 / 499, 57 suites (492 + 7) | 499 / 499 | not run |
+
+The project suite ran against the actual variant source on each branch (no adapter, no substitution). **No static test failed.** The implementation-sensitive static tests all pass on every variant:
+- X03 ABI lists (`AMMPoolOwnerless`, `AMMFactoryOwnerless`);
+- the Factory/direct codehash and metadata equivalence (`AMMFactoryIntegration`);
+- the metadata assertions in `AMMPoolLiquidity`.
+
+The ABI JSON (`forge inspect … abi --json`) is identical before and after for `AMMFactory` (experiment 2) and `AMMPool` (experiment 3). **No behavioural test failed.**
+
+#### Experiment 1: reuse Pool balance snapshots on a later deposit
+
+**Change** (later path only; the initial path is unchanged as a control). Order for token0 first; `token1First` mirrors it.
+1. At entry, read and keep `b0`, check `b0 ≥ reserve0`; then read and keep `b1`, check `b1 ≥ reserve1`. This is the production deficit-check order. Then run the terminal-pool check and take the two payer snapshots.
+2. Pull token0 and read `a0`; `n0 = a0 − b0`. The entry reading is the before-reading; only STATICCALLs happen in between.
+3. Re-plan if needed. Read `c1` immediately before token1's transfer, pull token1, then read `d1`; `n1 = d1 − c1`.
+4. BI-2′: read token0's final balance `e0` fresh, after the second transfer. Check token0 against `(b0, e0)`, then token1 against `(b1, d1)`. `d1` is reused because only a return and a STATICCALL lie between it and the end of the transfers.
+
+Unchanged: payer snapshots, request caps, re-plan, `maxDebit`, `maxExcess`, `minShares`, the event, the ABI, `nonReentrant` and the check order (`InCallBalanceLoss` → `PayerDebitTooHigh` → …).
+
+**Test change in commit 2.** `test/experiment/SnapshotReuseCalls.t.sol`, constant `LATER_POOL_READS_PER_TOKEN`: 5 → 3. This is the only test edit; the benchmark bodies are unchanged.
+
+**Calls per later deposit** (recorded accesses; all callers are the Pool; per token, then the total). The counts are the same in all four scenarios (ORD token0 first and `token1First`; §5.2 taxed second and taxed first).
+
+| | `balanceOf(Pool)` per token | `balanceOf(payer)` per token | `transferFrom` per token | Total `balanceOf` |
+|---|---:|---:|---:|---:|
+| Baseline `c313d6b` | 5 | 2 | 1 | 10 Pool + 4 payer = 14 |
+| Variant `9ae671a` | 3 | 2 | 1 | **6 Pool + 4 payer = 10** |
+| Initial deposit, both commits | 4 | 2 | 1 | 8 + 4 = 12 |
+
+There were no other calls to either token and no `balanceOf` of a third account. Text trace (ORD, variant): 6 × `balanceOf(AMMPool)`, 4 × `balanceOf(alice)`, 2 × `transferFrom`.
+
+**Scenarios.**
+- **ORD**: `MockERC20`, Pool (1000e18, 2000e18), alice payer and recipient, caps (1e18, 2e18), `maxDebit` (1e18, 2e18), `maxExcess` MAX, `minShares` 0. These are the §14.8 ORD conditions.
+- **G02**: caps (1e18, 1e19), bounds MAX.
+- **L46** (report §5.2): reserves (10,000, 20,000), token1 taxed 10 % on `transferFrom`, bob, caps (1,000, 2,500), `minShares` 1,272.
+  - Taxed second: `maxDebit` (1,000, 2,000), `maxExcess` (100, 1).
+  - Taxed first: `maxDebit` (900, 2,000), `maxExcess` (0, 1).
+
+  Every bound equals the actual value.
+
+| Scenario | Baseline | Variant | Δ | No-payer (10 + 0 reads), same harness |
+|---|---:|---:|---:|---:|
+| ORD later, token0 first | 108,158 | 104,721 | **−3,437** | 104,108 |
+| ORD later, `token1First` | 108,180 | 104,722 | **−3,458** | 104,130 |
+| G02 later, token0 cap binds, bounds MAX | 108,782 | 105,345 | −3,437 | 104,732 |
+| L46 taxed second | 193,456 | 189,883 | **−3,573** | 189,270 |
+| L46 taxed first (re-plan) | 193,847 | 190,253 | **−3,594** | 189,661 |
+| Initial deposit (control) | 231,972 | 231,968 | −4 | 227,922 |
+| Deployment `new AMMPool` | 2,424,882 | 2,668,839 | **+243,957** | 2,278,406 |
+| `AMMPool` runtime / initcode | 10,553 / 11,709 B | 11,685 / 12,869 B | +1,132 / +1,160 B | — |
+| `AMMFactory` runtime (embeds the Pool initcode) | 12,770 B | 13,930 B | +1,160 B | — |
+
+- **No-payer column (matched conditions).** It uses the `da59581` adapter `AMMPoolNoPayerDebit.AMMPool.sol` (`py -I experiment/gen_variants.py --adapters DIR` in a `git archive da59581` copy; SHA-256 `5655b8f2…c803b`), copied over `src/AMMPool.sol`. The harness files `SnapshotReuseBase.sol` and `GasSnapshotReuse.t.sol` were copied unchanged from `c313d6b`. Same configuration, run twice, identical values.
+- The no-payer variant ignores `maxDebit`, so with these exact bounds its outcome is the same (§14.8). The variant costs **+613** (ORD token0 first, L46 taxed second) and **+592** (`token1First` scenarios) more than the no-payer Pool, and it keeps the payer-debit bound.
+- §14.8's own figure (104,135) comes from a different harness and is not compared here.
+
+**Outcomes** (`SnapshotReuseBehaviour`, 8 tests, identical on both commits; every revert is checked for full rollback of payer and Pool balances, reserves, supply and LP balance).
+
+| Scenario | Debit | Pool receipt / event `net` | Shares | Reserves after | One-unit-tight bounds |
+|---|---|---|---:|---|---|
+| ORD, either order | 1e18, 2e18 | 1e18, 2e18 | 1,414,213,562,373,095,048 | 1001e18, 2002e18 | `maxDebit0`, `maxDebit1` → `PayerDebitTooHigh` |
+| L46 taxed second | 1,000, 2,000 | 1,000, 1,800 (tax 200 burned) | 1,272 | 11,000, 21,800 | `maxDebit` 999 / 1,999 → `PayerDebitTooHigh`; `maxExcess` 99 / 0 → `ExcessContributionTooHigh`; `minShares` 1,273 → `InsufficientShares` |
+| L46 taxed first | 900, 2,000 | 900, 1,800 | 1,272 | 10,900, 21,800 | `maxDebit` 899 / 1,999; `maxExcess1` 0; `minShares` 1,273 (`maxExcess0` = 0 is already exact) |
+
+`LiquidityAdded(payer, payer, net0, net1, shares)` was asserted with `vm.expectEmit` in every success case.
+
+**Deficit and error order** (`MockDeficitERC20` and `MockFailingERC20` at fixed addresses, deficit of 1 unit):
+- token0 in deficit while token1's `balanceOf` reverts → **`ReserveDeficit` on both commits, in both transfer orders**. token1 is never read.
+- token0's `balanceOf` reverts while token1 is in deficit → the token's own `MockFailure` on both commits, in both orders.
+
+The existing cross-token in-call tests (`AMMPoolInCallBalance`, B08/B09, L40) and the deficit suites pass unchanged.
+
+**Observable differences.**
+- **Tested:** no outcome differs (receipts, shares, reserves, debits, events, errors, error order, rollback) in any test, for supported tokens or for the unsupported mocks in the suite (deficit, failing, reentrant and over-debit tokens).
+- **Not tested (analysis):** the remaining differences are:
+  - the lower gas;
+  - the number and order of `balanceOf` calls seen in a trace;
+  - a token whose `balanceOf` result depends on the remaining gas or on the call count, or that runs out of gas, which could answer differently. Between any two reused readings only STATICCALLs and returns occur, so a `balanceOf` that depends only on state gives the same value.
+- The deployment cost rises because the later path now has its own pull and check helpers while the initial path keeps the production ones. A smaller layout was not built.
+
+**Recommendation.**
+- **Who benefits:** every later depositor, about −3.2 % (ordinary) or −1.8 % (taxed).
+- **Who pays:** the Pool deployer, +243,957 once. Break-even is ≈ 243,957 / 3,437 ≈ 71 later deposits per Pool [estimate].
+- **Risk:** correctness now rests on the argument that nothing between two reused readings can move a balance, which reverses the per-transfer fresh-snapshot rule (DECISIONS M6-8).
+- **Advice:** a sound candidate for a busy Pool. It needs a decision on that rule and a mutation pass before adoption, so it is **not recommended for the submitted code**.
+
+#### Experiment 2: one Factory registry entry per unordered pair
+
+**Change.**
+- The public double mapping `getPair` becomes a private `_pairs[token0][token1]` (same storage slot 0).
+- `createPair` writes only the sorted entry and uses the already sorted addresses for the duplicate check.
+- An explicit `function getPair(address tokenA, address tokenB) external view returns (address pool)` sorts and reads it. Selector, `view`, parameter and return names, return values, `allPairs`, `PairCreated` and `PairExists` are unchanged. The ABI JSON is identical.
+
+**Tests** (`FactoryPairLookup`, 3 tests, identical on both commits):
+- Before creation: both orders, `(a, a)`, `(0, a)` and `(0, 0)` return 0.
+- After `createPair(b, a)`: both orders return the Pool; identical, zero and missing pairs return 0; `allPairs` and the length are checked; the `PairCreated(a, b, pool, 1)` contents are asserted; a duplicate in either order reverts `PairExists`.
+- A second pair `(a, c)` is checked the same way (`pairCount` 2), and the first pair is unchanged.
+- Fuzz: any `(x, y)` returns the Pool only for the created pair in either order.
+
+| Scenario | Baseline | Variant | Δ |
+|---|---:|---:|---:|
+| `createPair` first (`allPairs` 0 → 1) | 2,316,864 | 2,294,626 | **−22,238** |
+| `createPair` subsequent (1 → 2) | 2,299,764 | 2,277,526 | **−22,238** |
+| `getPair` cold, existing pair, sorted order | 5,978 | 6,079 | +101 |
+| `getPair` cold, existing pair, reversed order | 5,978 | 6,089 | +111 |
+| `getPair` cold, missing pair, sorted order | 5,972 | 6,073 | +101 |
+| in one transaction: first lookup, sorted / reversed | 5,764 / 5,764 | 5,865 / 5,875 | +101 / +111 |
+| in one transaction: repeated lookup, same order, sorted (warm) | 1,255 | 1,356 | +101 |
+| in one transaction: repeated lookup, same order, reversed (warm) | 1,255 | 1,366 | +111 |
+| separate scenario: sorted, then reversed second lookup | 3,255 | 1,366 | −1,889 |
+| Deployment `new AMMFactory` | 2,840,924 | 2,854,320 | +13,396 |
+| `AMMFactory` runtime / initcode | 12,770 / 12,968 B | 12,832 / 13,030 B | +62 / +62 B |
+
+- Cold means a top-level call under isolation.
+- In-transaction lookups are measured inside a probe contract (`PairLookupProbe`), so the probe's own CALL is included.
+- The reversed second lookup is cheaper in the variant only because both orders now read the same slot, which the first lookup warmed.
+
+**Break-even [estimate]**, for scenarios with a positive measured overhead:
+- cold, or repeated in the same order, sorted: 22,238 / 101 ≈ 220 paid on-chain lookups per pair;
+- reversed: 22,238 / 111 ≈ 200.
+
+Off-chain `eth_call` lookups cost users nothing. The +13,396 Factory deployment is paid once per Factory.
+
+**Recommendation.**
+- **Who benefits:** the pair creator, about −1 %, once per pair.
+- **Who pays:** every contract that pays for an on-chain `getPair` (e.g. an authenticity check before each interaction), +101 to +111 per lookup, indefinitely.
+- **Advice:** a pair used by on-chain integrators passes 200 lookups easily, so **keep the current two-entry registry**.
+
+#### Experiment 3: constant LP metadata
+
+**Change.**
+- `ERC20("", "")` in the constructor, and `name()` / `symbol()` overridden to return exactly `"AMM Liquidity Provider"` / `"AMM-LP"`.
+- The overrides are declared `view`, not `pure`, so the ABI `stateMutability` is unchanged (compiler warning 2018 on both). The ABI JSON is identical.
+- Balances, allowances, transfers, supply and `_update` stay in OpenZeppelin `ERC20`.
+
+**Tests.**
+- `LpMetadata` (2 tests, identical on both commits) checks both strings, `decimals() = 18` and the exact ABI-encoded return data on a directly deployed and a Factory-created Pool.
+- The original LP and ABI suites pass on the variant: `AMMPoolLiquidity` 35, `AMMFactoryIntegration` 8 (metadata and codehash equal between direct and Factory Pools), `AMMPoolOwnerless` 7 and `AMMFactoryOwnerless` 6, all passed.
+
+| Scenario | Baseline | Variant | Δ |
+|---|---:|---:|---:|
+| Standalone deployment `new AMMPool` | 2,424,885 | 2,351,527 | **−73,358** |
+| `createPair` first (separate comparison) | 2,316,864 | 2,246,710 | **−70,154** |
+| `name()` cold | 6,322 | 3,615 | −2,707 |
+| `symbol()` cold | 6,321 | 3,625 | −2,696 |
+| Deployment `new AMMFactory` | 2,840,926 | 2,795,197 | −45,729 |
+| `AMMPool` runtime / initcode | 10,553 / 11,709 B | 10,402 / 11,497 B | −151 / −212 B |
+| `AMMFactory` runtime / initcode | 12,770 / 12,968 B | 12,558 / 12,756 B | −212 / −212 B |
+
+Standalone deployment and `createPair` each contain one Pool creation. They are alternative ways to create a Pool, so the two savings **must not be added**.
+
+**Recommendation.**
+- **Who benefits:** whoever creates a Pool, about −70k once; every `name()` / `symbol()` caller, about −2.7k (mostly off-chain); and the Factory deployer, −45,729.
+- **Who pays:** nobody was found in these measurements.
+- **Advice:** this is the only one of the three with no measured cost, so it is **recommended for adoption, subject to the student's decision**. It implements the approved constant metadata (DECISIONS M3-1) differently; the decision itself is unchanged.
+
+**Status.** Measured. No variant is adopted. DECISIONS.md is unchanged until the student decides; production adoption, merge and push each need separate approval. Report §11.4 summarises the three results.
+
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
 Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
