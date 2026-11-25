@@ -13,11 +13,11 @@ Solidity 0.8.38 · Foundry (forge 1.9.0) · OpenZeppelin Contracts v5.7.0 · opt
 | `AMMMath` | `src/libraries/AMMMath.sol` | Pure maths: swap quote with fee, initial-share square root. |
 | `IAMMPool` | `src/interfaces/IAMMPool.sol` | Deposit parameter struct `AddLiquidityParams`. |
 
-Beyond a basic AMM, the design (i) measures what every transfer actually delivers, so the accounting stays correct for tokens with transfer taxes, (ii) gives each user protection a precise, tested meaning, and (iii) separates recorded reserves from balances, so that a direct transfer never changes the recorded reserves: it becomes surplus, or it refills a deficit (§8.3).
+Beyond a basic AMM, the design adds three things. (i) **Measured inputs** (§4.2, §5.3, §7): a deposit or a swap input is booked at the Pool's measured balance increase, not at the requested amount, so a transfer tax cannot inflate the reserves. On the way out, the Pool's balance must fall by exactly the amount sent (A8); withdrawals and swaps also check the recipient's measured net receipt against the caller's minimum (MIN-NET), `skim()` does not (§8.1). (ii) **User limits as revert conditions** (§5.4, §6.2, §7): each limit is compared with one measured or computed quantity, and a failed limit reverts the whole call; boundary tests show that the exact limit passes and one unit tighter reverts. (iii) **Recorded reserves separate from balances** (§4.4, §8): a direct transfer never changes a recorded reserve; it becomes surplus, which only `skim()` removes, or it refills an existing deficit.
 
 ### 1.2 Evidence labels
 
-**[proof]** written mathematical argument · **[source]** inference from reading the code · **[model]** sampled integer Python model of the formulas, not the contract · **[test]** executed against the real contracts in Foundry's local EVM (evidence over sampled states, not a proof) · **[gas]** measured gas, harness and configuration stated.
+**[proof]** written mathematical argument · **[source]** inference from reading the code · **[model]** sampled integer Python model of the formulas, not the contract · **[test]** executed against the real contracts in Foundry's local EVM (evidence over sampled states, not a proof) · **[gas]** measured gas, harness and configuration stated · **[estimate]** arithmetic on measured [gas] values (e.g. break-even counts), not itself measured.
 
 Notation: `r0, r1` recorded reserves; `S` LP supply; `n_i` amount the Pool actually received; `σ` shares minted; `u_i` unmatched "excess". Amounts are in smallest units.
 
@@ -35,7 +35,7 @@ In a continuous model, without fees and ignoring integer rounding, a trade keeps
 aFee = a · 9970;   out = ⌊ aFee · rOut / (rIn · 10000 + aFee) ⌋
 ```
 
-This equals Uniswap V2's 997/1000 rule [source]. `swapExactInput` applies it to the **measured** input (§7).
+This equals Uniswap V2's 997/1000 rule [source] (`AMMMath.getAmountOut`; V2 `Router02.getAmountOut`). `swapExactInput` applies it to the **measured** input (§7).
 
 ### 2.3 What the fee guarantees
 
@@ -49,15 +49,17 @@ This equals Uniswap V2's 997/1000 rule [source]. `swapExactInput` applies it to 
 
 ### 3.1 A pro-rata claim on recorded reserves
 
-`h` of `S` shares redeem `⌊h·r_i/S⌋` of each token (§6.1). A direct transfer does not change the recorded reserves: it is surplus, which backs no shares, or it refills a deficit up to the recorded reserve (§8.3).
+`h` of `S` shares redeem `⌊h·r_i/S⌋` of each token (§6.1). A direct transfer does not change the recorded reserves, so it never raises this per-share claim: it is surplus, which backs no shares, or it refills an existing deficit up to the recorded reserve (§8.3). A deposit's unmatched excess does enter the reserves, without extra shares (§5.7).
 
-### 3.2 First deposit and the permanent lock
+### 3.2 Opening a pool: first deposit and the permanent lock
 
-The first depositor sets the price and receives `⌊√(n0·n1)⌋ − 1000` shares (`AMMMath.initialShares`); 1,000 shares are minted to the Pool itself and can never move or be burned (`AMMPool._update`). The lock makes the classic first-depositor inflation attack expensive (§9.2). Through add, remove and swap it keeps both reserves positive [proof] ([test] `test_W06_lastLPExitsLockRemains`); only `sync()` after a deficit, which needs an unsupported token, can lower a reserve to 0 (terminal pool, §6.4). The lock also keeps its pro-rata part of all fees and excess: negligible in a large pool, half of them if the initial `⌊√(n0·n1)⌋` is 2,000 [source].
+(1) Anyone calls `AMMFactory.createPair(tokenA, tokenB)`; the caller gets no role and is not recorded. (2) The depositor (the *payer*, `msg.sender` of `addLiquidity`) approves the **Pool**, not the Factory, for at least `amount_iRequestMax` of each token, because the first deposit requests both caps in full. (3) The first `addLiquidity` (branch `totalSupply() == 0`) pulls both tokens and measures the receipts `n0, n1`; tokens already at the Pool's address are excluded and stay surplus. (4) The receipts become the reserves, so `n1/n0` sets the opening price; `maxDebit_i` and `minShares` apply, `maxExcess` has no effect. (5) `⌊√(n0·n1)⌋ − 1000` shares (`AMMMath.initialShares`) are minted to `p.recipient`, which may differ from the payer, and 1,000 to the Pool itself, where `AMMPool._update` forbids moving or burning them. [test] `test_L01_initialDepositSharesAndLock`, `test_L19_taxedInitialDepositUsesMeasuredNet`, `test_B09a_preExistingSurplusUnchanged_initial_allCases`; through the Factory `test_F06_initialDepositAndLock`. Whether a call takes this branch is decided at execution (§5.5).
+
+**What the lock guarantees** [proof]. (a) `totalSupply()` never returns to 0, so the first-deposit branch, in which one depositor sets the price, cannot be reopened. (b) 1,000 shares exist forever and are never redeemed; through add, remove and swap this keeps both reserves positive ([test] `test_W06_lastLPExitsLockRemains`). Only `sync()` after a deficit, which needs an unsupported token, can lower a reserve to 0 (terminal pool, §6.4). (c) Let `Δ` be an increase of one share's claim `r_i/S` on token i, in units of token i. If it comes from value that enters the reserves without new shares (deposit excess, swap fees), the reserve must grow by `S·Δ ≥ 1000·Δ`, and `1000·Δ` of that stays with the locked shares. This bounds what is left in the Pool; it is not a market value and not the net cost of a particular attack (§9.2). The lock thus keeps its pro-rata part of all fees and excess: negligible in a large pool, half of them if the initial `⌊√(n0·n1)⌋` is 2,000.
 
 ### 3.3 A pool-level measure that never decreases
 
-[proof] Add and remove round against the actor, so per token `r_i'·S ≥ r_i·S'`; a swap keeps `S` and does not decrease `k` (§2.3). Therefore `k/S²` never decreases through add, remove or swap. Because the square root is increasing, this is the same monotonicity statement as for `√(r0·r1)/S`, the geometric-mean reserve per share: one is non-decreasing exactly when the other is [test: invariant I10 of the stateful suites, §10; 2 suites × 256 runs × 500 random calls]. Exceptions: the initial deposit (`S` starts at 0) and `sync()` after a deficit, which lowers `k` (§8.2).
+[proof] Add and remove round against the actor, so per token `r_i'·S ≥ r_i·S'`; a swap keeps `S` and does not decrease `k` (§2.3). Therefore `k/S²` never decreases through add, remove or swap. Equivalently, `√(r0·r1)/S`, the geometric-mean reserve per share, never decreases [test: invariant I10, §10]. Exceptions: the initial deposit (`S` starts at 0) and `sync()` after a deficit, which lowers `k` (§8.2).
 
 This measure is **not** the market value of a share. A swap lowers the per-share claim on the output token, and when the external price moves an LP can be worth less than simply holding the two tokens (impermanent loss).
 
@@ -65,7 +67,7 @@ This measure is **not** the market value of a share. A swap lowers the per-share
 
 ### 4.1 `AMMFactory`
 
-State: `surplusRecipient` (immutable, shared by all its Pools), a private registry holding each pair once under its sorted order, `allPairs[]`. `getPair(tokenA, tokenB)` sorts its arguments and reads that entry, so both orders return the same Pool (0 if none). `createPair(tokenA, tokenB)` rejects zero addresses, identical tokens and addresses without code, sorts, rejects duplicates, deploys `new AMMPool(token0, token1, surplusRecipient)` and registers it. [test] `test/AMMFactory.t.sol` (creation, both orderings, duplicates, constructor checks); `test/AMMFactoryPairLookup.t.sol` (lookups); registry invariant `invariant_I5_registryConsistent` (`test/AMMFactoryInvariant.t.sol`).
+State: `surplusRecipient` (immutable, shared by all its Pools), a private registry holding each pair once under its sorted order, `allPairs[]`. `getPair(tokenA, tokenB)` sorts its arguments and reads that entry, so both orders return the same Pool (0 if none). `createPair(tokenA, tokenB)` rejects zero addresses, identical tokens and addresses without code, sorts, rejects duplicates, deploys `new AMMPool(token0, token1, surplusRecipient)` and registers it. [test] `test/AMMFactory.t.sol`, `test/AMMFactoryPairLookup.t.sol`; invariant `invariant_I5_registryConsistent`.
 
 ### 4.2 `AMMPool`
 
@@ -77,18 +79,27 @@ State: `surplusRecipient` (immutable, shared by all its Pools), a private regist
 | ERC-20 balances / supply | inherited | LP shares; `_update` enforces the lock rules |
 | reentrancy lock | transient storage | `ReentrancyGuardTransient` |
 
-`addLiquidity`, `removeLiquidity`, `swapExactInput`, `sync` and `skim` are `nonReentrant`. Their order differs because a Pool must measure an incoming amount before it can book it: `addLiquidity` runs checks → pulls → balance checks → effects; `swapExactInput` checks → pull → effects → push; `removeLiquidity` checks → effects (burn, reserves) → pushes; `skim` only pushes surplus and `sync` makes no transfer. Every Pool uses the same LP name and symbol, so wallets cannot tell pools apart by name. Two helpers carry the token accounting:
+Every Pool uses the same LP name and symbol, so wallets cannot tell pools apart by name. Two helpers carry the token accounting:
 
-- `_pullMeasured(token, amount)`: Pool balance before → `transferFrom(msg.sender, Pool, amount)` → after; the difference is the Pool's receipt.
-- `_pushMeasured(token, to, amount, minNet)`: the Pool's balance must fall by exactly `amount` (**A8**) and the recipient's measured increase must be at least `minNet` (**MIN-NET**).
+- `_pullMeasured(token, amount)`: Pool balance before → `transferFrom(msg.sender, Pool, amount)` → after; the increase is the receipt that is booked. A later deposit uses variants that reuse an earlier reading (`_pullFromKnown`, `_pullMeasuredEnd`; §5.3).
+- `_pushMeasured(token, to, amount, minNet)` makes two checks of different kinds. **A8** (DECISIONS §5) is an equality on the Pool side: the Pool's balance must fall by exactly `amount`, the number subtracted from the reserve (else `OutboundTransferMismatch`). **MIN-NET** (DECISIONS §5) is a lower bound on the recipient side: `to`'s measured increase may be below `amount` for a taxed token, but must be at least `minNet` (else `InsufficientNetReceived`). Used by `removeLiquidity` and `swapExactInput`. `skim()` (`_skimToken`) applies A8 only, so a taxed token's `surplusRecipient` receives less [test] `test_R09_taxedSkimExactPoolSideRecipientReceivesLess`.
+
+**Order of the entry points** [source]. The Pool must measure an incoming amount before it can book it, so the deposit and the swap transfer tokens in before they write reserves:
+
+- `addLiquidity`: checks (including the deficit reads) → payer snapshots → pull(s) and measurement → BI-2′ and payer-debit checks → reserves and mint → event; no token call follows the reserve write.
+- `swapExactInput`: checks → pull and measure the input → reserves → outbound transfer with A8 and MIN-NET → event.
+- `removeLiquidity`: checks → burn and reserves → two outbound transfers → event (the Checks–Effects–Interactions order).
+- `skim` sends surplus without writing reserves; `sync` writes reserves without a transfer.
+
+While a token call runs, the Pool's five state-changing entry points (`addLiquidity`, `removeLiquidity`, `swapExactInput`, `sync`, `skim`) revert on re-entry: they share one `nonReentrant` lock, and `_update` mints or burns LP only while it is held. Still callable: the views (`getReserves`, `getAmountOut`, `balanceOf`, `totalSupply`) and LP `transfer`/`transferFrom`/`approve`, which change neither reserves nor supply. A callback reads pre-call reserves and supply during an inbound pull and post-swap reserves during the outbound transfer [test] `test_X05_midSwapInboundReadsPreCallState`, `test_X05_midSwapOutboundReadsPostEffectReserves`. The lock is per Pool and relies on a truthful `balanceOf` (§4.5).
 
 ### 4.3 `AMMMath`
 
-Internal pure functions compiled into the Pool; tested on their own (`test/AMMMath.t.sol`) and through the Pool.
+Internal pure functions compiled into the Pool; tested on their own (`test/AMMMath.t.sol`) and through the Pool. OpenZeppelin `Math.mulDiv(x, y, d)` returns `⌊x·y/d⌋` with the product `x·y` held in 512 bits, so only the quotient must fit in 256 bits. `getAmountOut` calls `mulDiv(a·9970, rOut, rIn·10000 + a·9970)`; its first and third arguments are ordinary checked 256-bit arithmetic. `initialShares` forms `net0·net1` in checked 256 bits before `Math.sqrt`, so a first deposit with `n0·n1 ≥ 2²⁵⁶` reverts (Panic 0x11) [test] `test_Z06_initialShares_overflowBoundary`. The Pool's own calls (`mulDiv` in `removeLiquidity` and `_mintLater`; `mul512` with saturation in `_pullLater` and `_mulDivSat`) are separate (§9.5).
 
 ### 4.4 Recorded reserves versus balances
 
-The Pool never prices from `balanceOf`. `balance − reserve` is **surplus** if positive (unsolicited transfers) and **deficit** if negative (a token removed Pool balance). Reserves are written only by the initial deposit, later deposit, `removeLiquidity`, `swapExactInput` and `sync` (downward only) [source]. A direct transfer therefore cannot change reserves: the "donate then `sync`" price route and the classic donation-inflation attack are closed. During a deficit a direct transfer first refills the missing backing; only the part above the reserve is surplus (§8.3). Value can still enter reserves through the paths that are meant to add it: swap fees and the excess of a deposit (§5.7, §9.2).
+The Pool never prices from `balanceOf`. Per token, `balance − reserve` is **surplus** if positive and a **deficit** if negative (a token removed Pool balance; unsupported tokens only). Every write to `reserve0`/`reserve1` is in `addLiquidity` (first deposit), `_mintLater` (later deposit), `removeLiquidity`, `swapExactInput` or `_syncToken` (downward only) [source]. Hence: a direct transfer with no deficit is surplus; the per-share claim on recorded reserves is unchanged, and the tokens leave only through `skim()`. A direct transfer during a deficit refills the missing backing up to the reserve; reserves stay unchanged and only the part above them is surplus (§8.3). A deposit's unmatched excess and the swap fee do enter the reserves, without new shares (§5.7). So a donation can neither move the price through `sync` nor raise share value; the lock (§3.2) bounds the excess and fee channels (§9.2).
 
 ### 4.5 Supported tokens
 
@@ -144,11 +155,9 @@ An immediate full redemption returns `(907, 1,798)` [test] against a payment of 
 
 For exact tokens the excess is pure rounding: [proof] `u_i < r_i/S + r_i/r_j`; [test] at extreme requests, `testFuzz_F1T1_extremeRequest`.
 
-**Why two bounds per token.** `RequestMax_i` limits what the Pool asks the token contract for; `maxDebit_i` limits how much `msg.sender`'s balance actually falls over the whole call. They answer different questions. Example: `RequestMax = 100, maxDebit = 105` lets the Pool request at most 100 while tolerating up to 5 of extra sender-side fees. One number used as both bounds would remove this separate authorisation. For an ordinary token the caller can set the two numbers equal; while the call still promises to bound the actual debit, the debit must still be measured.
+**Why two bounds per token.** `RequestMax_i` limits what the Pool asks the token contract for; `maxDebit_i` limits how much `msg.sender`'s balance actually falls over the whole call. `RequestMax = 100, maxDebit = 105` requests at most 100 while tolerating up to 5 of extra sender-side fees; for an ordinary token the two can be equal, but the debit is still measured.
 
-**`minShares` versus `maxExcess`** (§5.2 example). They bound different quantities. bob receives 1,272 shares, so `minShares = 1,272` passes, but the token0 excess is 100, so `maxExcess0 = 99` reverts the same deposit. `maxExcess` has no effect on the first deposit (`u_i = 0` by definition). On a later deposit with a taxed token, `token1First` matters: if the first-pulled token delivers less than planned, the second request is re-planned from what arrived, which changes the excess (§5.7).
-
-**Simpler use is a caller-side matter.** A wallet or router could later pre-fill these fields for ordinary users (recipient = the user, an explicit deadline, `maxDebit_i = RequestMax_i` for ordinary tokens, `token1First` as an advanced option). The Pool itself has no defaults: every field is supplied by the caller.
+**`minShares` versus `maxExcess`** (§5.2 example): bob's 1,272 shares pass `minShares = 1,272`, yet the token0 excess of 100 makes `maxExcess0 = 99` revert the same deposit. With a taxed token `token1First` matters, because the second request is re-planned from what the first delivered (§5.7). The Pool has no defaults: every field is supplied by the caller.
 
 ### 5.5 The first deposit cannot be requested as such
 
@@ -170,7 +179,7 @@ Refunding it (an outbound transfer inside a deposit: more failure modes, another
 
 ### 6.2 Output rules A8 and MIN-NET
 
-A8: the Pool's balance must fall by exactly the amount sent (`OutboundTransferMismatch`), which rejects tokens that charge the Pool extra or move its balance mid-transfer [test] `test_B06_overDebitRejectedByA8`, `test_W10_classB_overDebitToken0Reverts`. MIN-NET: the recipient's measured increase must be at least `min_iNet` (`InsufficientNetReceived`), the amount that matters for a taxed token [test] `test_W04_minNetBoundaryToken0`, `test_W05_taxedToken0Output`. A8 is an equality, so a token whose transfers differ by rounding (share-based balances) can be deposited but not reliably withdrawn. A one-sided check would admit it but would also let an under-delivering token leave the shortfall in the Pool as surplus; A8 was kept.
+Both are defined in §4.2. A8 rejects tokens that charge the Pool extra or move its balance mid-transfer [test] `test_B06_overDebitRejectedByA8`, `test_W10_classB_overDebitToken0Reverts`; MIN-NET judges `min_iNet` on what a taxed token actually delivers [test] `test_W04_minNetBoundaryToken0`, `test_W05_taxedToken0Output`. Because A8 is an equality, a token whose transfers differ by rounding (share-based balances) can be deposited but not reliably withdrawn. A one-sided check would admit it, but would also let an under-delivering token leave the shortfall in the Pool as surplus; A8 was kept.
 
 ### 6.3 Small positions
 
@@ -182,7 +191,7 @@ If `sync()` lowers a reserve to 0 while shares exist, deposits and swaps revert 
 
 ## 7. Swapping
 
-`swapExactInput(tokenIn, amountIn, minNetAmountOut, recipient, deadline)`: checks (deadline, recipient, valid `tokenIn`, non-zero input and reserves, no deficit) → pull and measure the input `a` → `out` from §2.2 on `a` (0 reverts) → update reserves → send with A8 and MIN-NET. Unlike Uniswap V2's optimistic `swap`, the Pool pulls the input first and computes the output itself; there are no flash swaps. The direction is an address, so callers cannot invert it by misordering tokens. Taxed tokens: the input is priced on what arrived and `minNetAmountOut` is judged on what the recipient received [test] `test_S05_taxedInputPricedOnMeasuredNet`, `test_S06_taxedOutputMinNetBoundary`, `testFuzz_Z04_swapGrossVsNet`. There is no MEV protection beyond `minNetAmountOut` and `deadline`, and no view may serve as a price oracle (one transaction can move the spot price). [test] `test/AMMPoolSwap.t.sol` (swap and quote tests).
+`swapExactInput(tokenIn, amountIn, minNetAmountOut, recipient, deadline)`: checks (deadline, recipient, valid `tokenIn`, non-zero input and reserves, no deficit) → pull and measure `a` → `out` from §2.2 (0 reverts) → reserves → send (§4.2). Unlike Uniswap V2's optimistic `swap`, the Pool pulls the input first and computes the output itself; there are no flash swaps. The direction is an address, so callers cannot invert it by misordering tokens. Taxed tokens: the input is priced on what arrived and `minNetAmountOut` is judged on what the recipient received [test] `test_S05_taxedInputPricedOnMeasuredNet`, `test_S06_taxedOutputMinNetBoundary`, `testFuzz_Z04_swapGrossVsNet`. There is no MEV protection beyond `minNetAmountOut` and `deadline`, and no view may serve as a price oracle (one transaction can move the spot price).
 
 ## 8. Reserves, `sync()` and `skim()`
 
@@ -194,30 +203,36 @@ If `sync()` lowers a reserve to 0 while shares exist, deposits and swaps revert 
 
 A deficit in either token blocks add, remove and swap (`ReserveDeficit`, `_checkNoDeficit`); the block lifts only when **both** balances cover their reserves [test] `test_R08_deficitBothBlocksAll`, `test_R24_bothDeficitsOneRefilledStillBlocks`. `sync()` only lowers a reserve to the balance; LPs bear the booked loss pro rata and, as the price jumps, an extra arbitrage loss of about `P·d²/(4x)` (fees ignored) [proof, not tested]. A tiny deficit gives nobody a reason to pay for `sync()`, so integrators should call it.
 
-### 8.3 How tokens reach the reserves' backing
+### 8.3 Where tokens sent to the Pool end up
 
 | Case | Effect | Evidence |
 |---|---|---|
 | Direct transfer, no deficit | surplus; only `skim()` removes it; LPs do not benefit | [test] `test_R01_directTransferDoesNotChangeReserves`; invariant I9 |
 | Direct transfer during a deficit | refills the backing up to the reserve, only the part above it is surplus; a partial top-up keeps the block, an exact one lifts it; reserves unchanged, so LPs bear no write-down | [test] `test_R24_partialTopUpStillBlocksExactTopUpRestores`, `test_R08_deficitToken0BlocksAll` |
-| Excess inside `addLiquidity` | joins the reserves, benefits all shares, moves the price slightly | [test] §5.2 example; `test_F1T5_tier1_maxExcessBoundary_token0First` |
+| Excess inside a later `addLiquidity` | joins the reserves without extra shares, benefits all shares, moves the price slightly | [test] §5.2 example; `test_F1T5_tier1_maxExcessBoundary_token0First` |
 
-Uniswap V2's `sync()` sets reserves to balances in both directions, so a transfer plus `sync()` adds to reserves [source, V2]. Here `sync()` only lowers, which removes the `sync`/`skim` race and that price route, at the cost of a fixed `surplusRecipient`.
+Uniswap V2's `sync()` sets reserves to balances in both directions, so a transfer plus `sync()` adds to reserves [source] (V2 `UniswapV2Pair.sync`). Here `sync()` only lowers, which removes the `sync`/`skim` race and that price route, at the cost of a fixed `surplusRecipient`.
 
 ## 9. Security
 
+Three kinds of outcome, one example each:
+
+- **Blocked** (the call reverts): an outbound transfer that charges the Pool more than the amount sent (A8) [test] `test_B06_overDebitRejectedByA8`.
+- **Bounded by the caller's limit**: a swap whose net output would fall below `minNetAmountOut` [test] `test_S04_minNetBoundary`. A limit bounds only its own quantity: `minNetAmountOut` the recipient's net output, `minShares` a share count (not value, §5.6), `maxExcess_i` the unmatched amount of token i.
+- **Open, disclosed**: a token that later refuses the Pool's outbound transfers blocks withdrawal of both tokens, while new deposits still succeed (§9.3) [test] `test_X06_limitation_modeA_outboundRefused_drainAndNewDeposits`.
+
 ### 9.1 Reentrancy
 
-The five state-changing Pool functions are `nonReentrant` (the LP functions make no external calls). Malicious token callbacks are tested for add, remove, swap, `sync` and `skim`, both bubbling and swallowed [test] `AMMPoolReentrancy`, `AMMPoolSyncSkimReentrancy`. Views are unguarded, so mid-transaction reads are not a safe price (read-only reentrancy).
+Call order and lock coverage are in §4.2. Malicious token callbacks are tested for add, remove, swap, `sync` and `skim`, both bubbling and swallowed [test] `AMMPoolReentrancy`, `AMMPoolSyncSkimReentrancy`. Views are unguarded (DECISIONS M5-5), so a mid-transaction read is not a safe price (read-only reentrancy, THREAT_MODEL T13).
 
 ### 9.2 Inflation and donation
 
-Direct donations never enter reserves (§4.4), and the lock makes raising one share's value by `Δ` cost about `1000·Δ` [proof, approximate]. The deposit excess is a bounded donation channel; the evidence has four separate parts:
+Direct donations do not change recorded reserves (§4.4). Value enters the reserves without new shares only as deposit excess or swap fees; by §3.2 (c), raising one share's claim by `Δ` this way leaves at least `1000·Δ` with the locked shares [proof]. Each depositor bounds the excess with `maxExcess`. The evidence has four separate parts:
 
-- **Bonus-token experiment, local EVM** [test] (`test/AMMPoolInflation.t.sol`, `test_L13b_*`). An unsupported token mints a bonus to the Pool during the attacker's own deposit (`D = 10²⁵` per token, a free donation counted as paid). bob then makes 5,000 deposits with token0 request `w` from a fixed generator in `[10²¹, 10²¹ + 2⁶⁴ − 1]` and an unlimited token1 request. Both absolute `maxExcess` fields are derived from token0's `w`: unbounded (`type(uint256).max`), or `maxExcess0 = maxExcess1 = ⌊w·10/10,000⌋` ("10 bps"); for token1 this is an absolute amount, not 10 bps of token1. Result: unbounded → attacker profit ≈ 9.08·10²¹ per token, measured as the attacker's wallet change minus `D`, ≈ 1.8·10²² with both tokens valued 1:1, gas excluded; 10 bps → 4,442 of 5,000 deposits revert and the attacker loses.
-- **Honest-LP experiment, local EVM** [test] (`test/AMMPoolF1HonestLP.t.sol`): the same 5,000-deposit sequence, run again with one honest LP holding 0.99999901 % of the supply before the donation. The attacker's result per token, measured as the wallet change minus the assumed contribution cost `D`, turns negative.
+- **Bonus-token experiment, local EVM** [test] (`test/AMMPoolInflation.t.sol`, `test_L13b_*`). An unsupported token mints a bonus `D = 10²⁵` per token to the Pool during the attacker's own deposit (counted as paid). bob then makes 5,000 deposits (token0 request `w` from a fixed generator in `[10²¹, 10²¹ + 2⁶⁴ − 1]`, unlimited token1 request) with `maxExcess0 = maxExcess1` either unbounded or `⌊w·10/10,000⌋` ("10 bps", an absolute amount derived from token0). Unbounded: attacker profit ≈ 9.08·10²¹ per token (wallet change minus `D`, gas excluded); 10 bps: 4,442 of 5,000 deposits revert and the attacker loses.
+- **Honest-LP experiment, local EVM** [test] (`test/AMMPoolF1HonestLP.t.sol`): the same sequence with one honest LP holding 0.99999901 % of the supply before the donation; the attacker's result per token (wallet change minus `D`) turns negative.
 - **Reduced-scale fee channel, local EVM** [test] (`test/AMMPoolF1SwapFeeChannel.t.sol`): with supported tokens, the legitimate way to raise per-share value is trading fees; up to 2,000 round trips were executed, and the attacker as the only LP loses exactly what stays in the Pool.
-- **Full fee path** [model only]: an estimated 32,000–58,000 round-trip swaps would be needed to reach the bonus scale; capital, execution and net profitability are **not verified**.
+- **Full fee path** [model]: an estimated 32,000–58,000 round-trip swaps would be needed to reach the bonus scale; capital, execution and net profitability are **not verified**.
 
 Status: a known economic limitation of this Pool, bounded by each depositor's own `maxExcess`; not a demonstrated exploit with supported tokens. These experiments test this Pool only; no claim is made about other designs. Full figures: THREAT_MODEL T4, TEST_MATRIX §3.4.
 
@@ -235,21 +250,19 @@ Checked arithmetic turns overflow into a revert, never a wrong value; the hand-d
 
 ### 9.6 Balance changes inside a call
 
-BI-2′ guards `addLiquidity` only. `swapExactInput` and `removeLiquidity` rely on the entry deficit check, measuring each own transfer from a fresh snapshot, A8, MIN-NET and `nonReentrant`. With an unsupported token whose callback moves the Pool's balance outside the transfer being measured (THREAT_MODEL T30), a swap or remove does not detect a foreign decrease of **surplus**; a decrease that creates a **deficit** is rejected by the next call's entry check until `sync()`. Supported tokens cannot cause either case.
+BI-2′ guards `addLiquidity` only. `swapExactInput` and `removeLiquidity` rely on the entry deficit check, measuring each own transfer from a fresh snapshot, A8, MIN-NET and `nonReentrant`. With an unsupported token whose callback moves the Pool's balance outside the transfer being measured (THREAT_MODEL T30), a swap or remove does not detect a foreign decrease of **surplus** ([test] `test_B10_limitation_swapAndRemove_maskedForeignLossSucceeds`), nor, within that call, a decrease that creates a **deficit**. From the next call on, add, remove and swap revert `ReserveDeficit` until both balances cover their reserves (§8.2): either `sync()` writes the reserve down to the balance (down to 0 makes the Pool terminal, §6.4), or a transfer restores the balance to at least the reserve [test] `test_R08_operationsResumeAfterSync`, `test_R24_partialTopUpStillBlocksExactTopUpRestores`. Supported tokens make no such callback.
 
 ## 10. Verification
 
-Unit tests use exact values from independent models; fuzz tests cover the documented ranges; two stateful invariant suites (exact and 1 %/3 % taxed tokens, 256 runs × 500 random calls) check after every call: LP supply and lock (I1), balance ≥ reserve (I2), the swap formula and `k` (I3), debit ≤ cap and ≤ `maxDebit` (I6), exact outbound amounts (I7), `skim` only to `surplusRecipient` (I8), surplus changes only by donation and `skim` (I9), and §3.3 (I10). Every feature had a mutation check (deliberate bugs in one source file that a test had to catch); survivors were analysed and test gaps closed. `forge lint` findings were triaged (one false positive; accepted timestamp and event-order warnings). **Not done:** formal verification, symbolic execution, slither, Echidna/Medusa, fork tests, an external audit.
+Unit tests use exact values from independent models; fuzz tests cover the documented ranges; two stateful invariant suites (exact and 1 %/3 % taxed tokens, 256 runs × 500 random calls) check after every call: LP supply and lock (I1), balance ≥ reserve (I2), the swap formula and `k` (I3), debit ≤ cap and ≤ `maxDebit` (I6), exact outbound amounts (I7), `skim` only to `surplusRecipient` (I8), surplus changes only by donation and `skim` (I9), and §3.3 (I10). Every feature had a mutation check (deliberate bugs in one source file that a test had to catch); survivors were analysed and test gaps closed. `forge lint` findings were triaged (TEST_MATRIX §16). **Not done:** formal verification, symbolic execution, slither, Echidna/Medusa, fork tests, an external audit.
 
-### 10.6 Final regression
-
-Final code and tests: commit `e951544` (after `1ab26ec` only comment tags; same bytecode and gas). Against the earlier regression commit `04eb336` it changes `src/AMMPool.sol` (constant LP metadata with `name()` declared `pure`; snapshot reuse on a later deposit) and `src/AMMFactory.sol` (one registry entry per pair), §11.2, and adds their tests and the comparison harness. Compiled ABI against `04eb336`: the Pool differs only in `name()`, now `pure`; the Factory is identical. `src/`, `test/`, `lib/` and `foundry.toml` are unchanged in every later commit of this branch. Experimental contracts (§11.4) are not part of this run. Commands: `forge build`; `forge test`; `FOUNDRY_FUZZ_RUNS=10000 forge test`. Result: **527 tests in 59 suites passed, 0 failed**, in both runs (invariant suites use their inline 256 × 500 setting). Configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`; forge 1.9.0.
+**Final regression** on the final code: `forge build` succeeded; **527 tests in 59 suites passed, 0 failed**, both with the default fuzz runs and with `FOUNDRY_FUZZ_RUNS=10000`; the invariant suites use their own 256 × 500 setting in both runs. Record: `docs/TEST_MATRIX.md` §14.11.
 
 ## 11. Gas
 
 ### 11.1 Measured baseline
 
-[gas] `test/gas/GasG02.t.sol` on the code of §10.6: one call per test, arguments prepared outside the measured interval, cold state (`isolate = true`); single scenarios, for comparisons inside this project only.
+[gas] `test/gas/GasG02.t.sol` on the final code (§10): one call per test, arguments prepared outside the measured interval, cold state (`isolate = true`). Table 11.2 uses another harness with its own scenarios (later deposit 105,377 here, 104,721 there); compare values only within one table.
 
 | Call | Gas | Call | Gas |
 |---|---:|---|---:|
@@ -258,18 +271,16 @@ Final code and tests: commit `e951544` (after `1ab26ec` only comment tags; same 
 | `removeLiquidity` | 94,105 | `sync` / `skim` no-op | 40,067 / 39,905 |
 | deploy `AMMPool` | 2,592,900 | `createPair` | 2,451,531 |
 
-Protection has a price [gas]. Before §11.2 (TEST_MATRIX §14.5: 108,789) a later deposit cost +10,264 (+10.4 %) more than the earlier ordinary-token-only deposit of `26ac725`, whose taxed deposits reverted: 8 more `balanceOf` reads (14 instead of 6; the final code makes 10), the re-plan, the excess bound and the struct-encoded call; the parts were not measured separately.
-
 ### 11.2 Optimisations adopted and rejected
 
 | | Change | Measured effect [gas] | Decision |
 |---|---|---|---|
-| Adopted | `removeLiquidity` burns the caller's shares **before** computing the amounts (`mulDiv`) | a withdrawal that fails for insufficient LP costs 27,926 instead of 30,469 (−2,543); a successful one 6 gas less (TEST_MATRIX §14.1) | kept: cheaper failure and the clearer error (`ERC20InsufficientBalance` instead of an overflow panic) |
+| Adopted | `removeLiquidity` burns the caller's shares **before** computing the amounts (`mulDiv`) | failing for insufficient LP 27,926 instead of 30,469; success −6 (TEST_MATRIX §14.1) | kept: cheaper failure, clearer error (`ERC20InsufficientBalance`, not an overflow panic) |
 | Adopted | LP `name()` / `symbol()` return constants instead of two stored strings | getters −2,707 / −2,696 (Table 11.2) | kept; `pure` alone changed no gas |
-| Adopted | A later deposit reuses the Pool's balance readings (6 + 4 reads instead of 10 + 4; §5.3); the Factory stores each pair once and `getPair` sorts | Table 11.2 | every later deposit is cheaper; relies on only read-only calls between a reading and its reuse |
-| Rejected | VP: `uint112` reserves in one storage slot (as Uniswap V2) | ≈ −4,300 per add/remove/swap, −21,567 on the first deposit, but +159,273 per deployment | caps reserves at `2¹¹²` (13 range tests fail; a new error case and range rules would be needed) |
+| Adopted | A later deposit reuses the Pool's balance readings (6 + 4 reads instead of 10 + 4; §5.3); the Factory stores each pair once and `getPair` sorts | Table 11.2 | kept; relies on only read-only calls between a reading and its reuse |
+| Rejected | VP: `uint112` reserves in one storage slot (as Uniswap V2) | ≈ −4,300 per add/remove/swap, +159,273 per deployment | caps reserves at `2¹¹²` (13 range tests fail) |
 
-The LP name is fixed and `name()` is declared `pure`. Its selector and return value are unchanged. The compiled ABI now records `pure` for `name()` and `view` for `symbol()`. We compared the combined implementation with commit `04eb336` using the same benchmark harness. Table 11.2 reports the measured gas change for each operation [gas] (finite `maxDebit`; Δ = final − `04eb336`, negative = saving; full matrix TEST_MATRIX §14.11). Standalone calls were measured from a cold start. Repeated-lookup scenarios measured the second call in the same transaction, after the first lookup had accessed the Factory and its storage.
+Table 11.2 compares the combined implementation with commit `04eb336` [gas], with the same harness, `test/gas/GasM11Combined.t.sol`, and the same scenarios on both commits (finite `maxDebit`; Δ = final − `04eb336`; "repeated" = second lookup in one transaction). Controls: swap +1, remove 0; full matrix TEST_MATRIX §14.11.
 
 | Operation (Table 11.2) | `04eb336` | final | Δ | % |
 |---|---:|---:|---:|---:|
@@ -280,17 +291,16 @@ The LP name is fixed and `name()` is declared `pure`. Its selector and return va
 | later deposit, §5.2 taxed, taxed second / first | 193,456 / 193,847 | 189,883 / 190,253 | −3,573 / −3,594 | −1.8 / −1.9 |
 | `getPair` sorted / reversed: cold; repeated in one tx; reversed after sorted | 5,975; 1,255; 3,255 | 6,076 / 6,086; 1,356 / 1,366; 1,366 | +101 / +111; −1,889 | +1.7 … +8.8; −58.0 |
 | `name()` / `symbol()` | 6,322 / 6,321 | 3,615 / 3,625 | −2,707 / −2,696 | −42.8 / −42.7 |
-| controls: `swapExactInput` / `removeLiquidity` | 82,539 / 94,105 | 82,540 / 94,105 | +1 / 0 | 0.0 |
-| runtime bytes, Pool / Factory | 10,553 / 12,770 | 11,534 / 13,780 | +981 / +1,010 | +9.3 / +7.9 |
 
-The per-pool break-even estimate uses the measured cost of pair creation, the initial deposit and subsequent deposits [estimate]: a Pool created through a deployed Factory (first or later pair: same Δ), one initial deposit and `N` ordinary later deposits (token0 first) give Δ(N) = 134,667 − 4 − 3,437·N: +100,293 at N = 10, −209,037 at N = 100, no dearer from **N = 40**. With a new Factory (+217,104): +317,397 and +8,067, break-even N = 103. Paid on-chain `getPair` calls add their Δ per lookup.
+Singly from `04eb336` (TEST_MATRIX §14.9) [gas]: snapshot reuse −3,437 per ordinary later deposit, +243,957 per Pool deployment; one Factory entry, `createPair` −22,238; constant metadata, `createPair` −70,154. Not additive (Pool deployment: singles +170,599, combined +170,503), so the estimate below uses combined values only.
 
-VU (`unchecked` on arithmetic proven safe) saved 263–534 gas per state-changing call; it was not adopted, because checked arithmetic turns a mistake in those proofs, or in a later edit, into a revert instead of a silent wrap. Other measured variants are in TEST_MATRIX §14.
+Break-even per Pool [estimate]: `createPair` through a deployed Factory, one initial deposit and `N` ordinary later deposits give Δ(N) = 134,667 − 4 − 3,437·N: +100,293 at N = 10, −209,037 at N = 100, no dearer from **N = 40**; with a new Factory (+217,104), from N = 103. Paid on-chain `getPair` calls add their Δ per lookup.
 
+VU (`unchecked` on arithmetic proven safe) saved 263–534 gas per state-changing call [gas]; not adopted, because checked arithmetic turns a mistake in those proofs, or in a later edit, into a revert instead of a silent wrap. Other variants: TEST_MATRIX §14.
 
 ### 11.3 Uniswap V2, qualitative
 
-No same-harness gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.16 and was not imported). From the V2 source (§13.3): V2 packs `uint112` reserves with a timestamp in one slot; computes deposits as `balance − reserve` after the router transferred tokens; keeps user minima in Router02; swaps optimistically with flash swaps; lets `sync` move reserves both ways; locks 1,000 LP at `address(0)`; and has a protocol fee and price accumulators. V2 keeps the core minimal and cheap and leaves protection to the periphery; this design puts the protections in the Pool, which costs gas but holds for every caller.
+No gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.16 and was not imported), so none is claimed. Design differences from the V2 source (§13.3): V2's `mint` credits `balance − reserve` after a router has transferred the tokens, whereas this Pool books its own measured receipts (§5.3; the two-reads variant of §11.4 implements V2's rule). V2 keeps user minima and deadlines in Router02; this Pool checks them in the Pool for every caller (§5.4; Router experiment C, §11.4). V2's `sync` moves reserves both ways; here it only lowers them (§8.3).
 
 ### 11.4 Alternatives evaluated
 
@@ -298,24 +308,20 @@ No same-harness gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.1
 
 | Alternative | Measured effect | Trade-off | Decision |
 |---|---|---|---|
-| A: skip the payer snapshot of token i when `maxDebit_i = type(uint256).max` | Later deposit, ordinary tokens, token0 first [measured]: both MAX 108,789 → 104,943 (−3,846); one MAX, one finite 108,477 → 106,617 / 106,618 (−1,860 / −1,859); both finite 108,165 → 108,292 (+127). The §5.2 example uses finite bounds, so it gains nothing. The finite side still binds (exact debit passes, one unit less reverts `PayerDebitTooHigh`). | Benefits callers who give up the debit bound; callers who keep it pay +127. A deposit with an unsupported token whose `balanceOf(payer)` reverts would no longer fail at the snapshot. | Evaluated, not adopted: the approved design keeps one uniform rule (always measure the payer); MAX is not a default. |
-| B: one shared Pool implementation, ERC-1167 clones with immutable arguments | Cold micro-benchmark [measured], same result returned: a clone call costs **+2,588** without reading the three addresses (delegatecall path) and **+6,072** when reading them (`fetchCloneArgs`); creating a clone 115,269 vs 2,159,325 for `new AMMPool`. The cost on each entry of a full Pool was **not measured** (Pool not ported). | The pair creator saves ≈ 2.04M once. Both measured call paths incurred extra gas. At 6,072 extra gas per call, about 337 calls would offset the estimated per-pair deployment saving, before allocating the shared implementation cost [estimated]. Constructor checks move to the Factory; Pools can no longer be deployed directly. | Evaluated, not adopted. In frequently used pools, recurring overhead could outweigh the initial deployment saving. |
-| C: payer-debit check in an optional custodial Router (prototype), not the Pool | **Gas, ordinary tokens** (same outcome on every path) [measured]: Pool at `04eb336` 108,185; direct deposit without the check 104,135 (−4,050); through the Router **230,294 gross execution gas** (+122,109; its refund counter of 45,386, from clearing Router balances and approvals, not subtracted). **Shares, §5.2 taxed token** [measured]: for the same 2,000 token1 paid, 1,145 shares through the Router vs 1,272 direct. In the Router the exact debit bound passes; one unit tighter reverts the whole call. | Direct callers have no debit bound. The prototype takes custody (the Pool pulls from its caller): 4 `transferFrom` instead of 2, 8 more reads; a token taxed on every transfer is taxed twice. Results apply to this custodial prototype only. Unlike A (finite bound kept in the Pool), protection becomes optional. | Not adopted (student); Pool retained. |
+| A: skip the payer snapshot of token i when `maxDebit_i = type(uint256).max` | Later deposit, ordinary tokens [gas]: both MAX −3,846; one MAX −1,860; both finite +127. The finite side still binds [test]. | Saves gas only for callers who give up the debit bound; the others pay +127. | Not adopted: one uniform rule, always measure the payer. |
+| B: one shared Pool implementation, ERC-1167 clones with immutable arguments | Micro-benchmark, not a full Pool [gas]: a clone call costs +2,588 (delegatecall) to +6,072 (reading the three addresses); creating a clone 115,269 vs 2,159,325 for `new AMMPool`. | ≈ 2.04M saved once per pair; at +6,072 per call, offset after about 337 calls [estimate]. Constructor checks move to the Factory. | Not adopted: a busy Pool would pay the per-call overhead on every call. |
+| C: payer-debit check in an optional custodial Router (prototype), not the Pool | Ordinary tokens [gas]: Pool 108,185; direct without the check 104,135 (−4,050); through the Router 230,294 gross (refund counter 45,386 not subtracted). §5.2 taxed token [test]: 1,145 shares through the Router vs 1,272 direct for the same 2,000 token1 paid. | Direct callers lose the debit bound; the custodial Router makes 4 `transferFrom` instead of 2, so a token taxed on every transfer is taxed twice. | Not adopted; Pool retained. |
 
-**Minimal deposits (same experiment).** Two Pool variants, each with an interface listing what it omits, keep the caps, step-2 planning, `nonReentrant`, the lock and zero-share rejection, but drop every caller bound. *Four reads*: both Pool balances before the two transfers (also used for the deficit check) and after them; `n_i` = after − before, so surplus present before the call is excluded and a deficit present before the call reverts. *Two reads* (Uniswap-V2-style, different accounting rules): only the balances after payment; `n_i = balance_i − reserve_i`. Surplus present before the call is part of that balance, so it enters the depositor's `n_i`, the share calculation and the reserves. An earlier shortfall `d` is subtracted in the same way, so the incoming payment first covers it and the depositor is credited only with the rest (1,000 paid, 900 credited). Ordinary-token deposit of row C [measured]:
+**Minimal deposits (same experiment).** Two variants keep the caps, step-2 planning, `nonReentrant`, the lock and zero-share rejection, but drop every caller bound. *Four reads*: Pool balances before and after the two transfers, `n_i` = after − before. *Two reads* (V2's rule): balances after payment only, `n_i = balance_i − reserve_i`, so earlier surplus is credited to the depositor and an earlier shortfall is charged to them. Ordinary-token deposit of row C [gas]; outcomes [test]:
 
 | Design | Pool `balanceOf` | Gas | Most important guarantee given up |
 |---|---:|---:|---|
 | Pool at `04eb336` | 14 | 108,185 | — |
 | No payer check, direct | 10 | 104,135 | the payer-debit bound |
-| Custodial Router (C) | 10 + 8 in Router | 230,294 gross | equal outcome for taxed tokens |
-| Four reads | 4 | 94,079 | `minShares`, `maxExcess`, the debit bound, the re-plan (taxed token first: 1,000 instead of 900 token0 for the same shares), BI-2′ |
+| Four reads | 4 | 94,079 | `minShares`, `maxExcess`, the debit bound, the re-plan, BI-2′ |
 | Two reads | 2 | 92,445 | the surplus and deficit rules: a 200-token1 donation made earlier raised the depositor's shares from 1,272 to 1,414; a 100-token0 deficit was paid by the depositor |
 
-Against the unchanged 492-test suite the three variants fail 16, 66 and 90 tests; apart from three ABI-list tests failed by the test adapter's extra entry point, every failure is in these guarantees. Among the tested variants, four reads is the lowest count that preserved this project's rules for surplus and deficit present before the call (the only case supported tokens can create [source, §9.6]); two reads is the lowest under the balance-minus-reserve rules; fewer reads were not tested. None was adopted; the production Pool is retained (student decision).
-
-**Three smaller changes, first measured one at a time** (each on its own branch from `04eb336`; TEST_MATRIX §14.9) [gas]. (1) Reused Pool readings in a later deposit (6 + 4 reads instead of 10 + 4): −3,437 (ordinary tokens), −3,573 / −3,594 (§5.2 taxed token), +243,957 per Pool deployment (≈ 71 deposits to recover on its own [estimate]), same outcomes and errors in the tested cases; a Pool with no payer-debit check (10 + 0 reads) measures 613 less than 6 + 4. (2) One Factory entry per pair: `createPair` −22,238; `getPair` as in Table 11.2. (3) Constant LP metadata: `createPair` −70,154, a standalone deployment −73,358, each getter ≈ −2,700. All three were adopted (student decision) and measured together in Table 11.2.
-
+Against the unchanged 492-test suite the three variants fail 16, 66 and 90 tests [test]; apart from three ABI-list tests (the adapter's extra entry point), every failure is in these guarantees. Four reads was the lowest tested count that kept this project's surplus and deficit rules. None was adopted.
 ## 12. Limitations
 
 Most important for users and LPs:
@@ -323,24 +329,23 @@ Most important for users and LPs:
 1. **Exit is not guaranteed for every token** accepted on deposit (§6.2, §9.3); no recovery path.
 2. **Excess is not refunded**; with taxed tokens it is first-order in the tax, bounded only by `maxExcess` (§5.7).
 3. **`minShares` bounds a share count, not value**; no per-token deposit minimum; the first deposit cannot be fully protected from front-running (§5.5, §5.6).
-4. **A deficit of any size freezes the pool** until one of two things happens (§8.2, §8.3): `sync()` writes the reserve down to the balance, and the LPs bear that write-down pro rata, plus the arbitrage after the price jump; or a third party tops the balance back up, and the recorded reserves stay unchanged, so the LPs bear no write-down.
+4. **A deficit of any size freezes the pool** (§8.2, §8.3) until `sync()` writes the reserve down (LPs bear the write-down pro rata, plus the arbitrage after the price jump) or a third party tops the balance back up (reserves unchanged, no write-down).
 5. **The excess inflation channel** is bounded but open; the supported-token path is model-only (§9.2).
 
 | Other disclosed limitations | § |
 |---|---|
-| Tests sample states; no formal proof | 10 |
 | One immutable `surplusRecipient` per Factory; refunds need trust | 4.1, 8.1 |
 | No MEV protection, oracle or pause; deadlines use `block.timestamp` | 7 |
 | Small positions may be unredeemable; terminal pools cannot trade again | 6.3, 6.4 |
 | Quotes ignore taxes and deficits; views unsafe mid-transaction | 2.4, 9.1 |
 | Deposit/withdraw fields are positional (token0/token1); swaps use an address | 5.1 |
-| The Pool does not emit the payer's debit or the unmatched amounts. The latter can be reconstructed from the Pool's logs using the pre-mint state (§5.2). | 5.2 |
+| No event for the payer's debit or the unmatched amounts (the latter reconstructable from the pre-mint state) | 5.2 |
 
 ## 13. Traceability
 
 ### 13.1 Development history
 
-M1 toolchain · M2 Pool skeleton and maths · M3 initial deposit and lock · M4 later deposit and withdrawal · M5 swap · M6 `sync`/`skim`/deficits · M7 Factory · M8 measured deposit · M10 verification and gas · M11 this report (M9, a protocol fee, was out of scope). Full records in `docs/`: `MILESTONES`, `DECISIONS`, `TEST_MATRIX`, `THREAT_MODEL`, `REPORT_NOTES` (`.md`).
+Milestones M1–M8 built the Pool, Factory and measured deposit, M10 verification and gas, M11 this report (M9, a protocol fee, out of scope). Records in `docs/`: `MILESTONES`, `DECISIONS`, `TEST_MATRIX`, `THREAT_MODEL`, `REPORT_NOTES`.
 
 ### 13.2 Code → report index
 
@@ -348,10 +353,8 @@ Each declaration below carries a NatSpec tag `@custom:report docs/REPORT.md §�
 
 | Code | § |
 |---|---|
-| `AMMMath.getAmountOut`, `AMMPool.getAmountOut` | 2.2–2.4 |
-| `AMMMath.initialShares`, `AMMPool._update` | 3.2, 9.4 |
-| `AMMFactory.createPair` | 4.1 |
-| `AMMPool._pullMeasured`, `_pushMeasured`, `getReserves` | 4.2, 4.4, 6.2 |
+| `AMMMath.getAmountOut`, `AMMPool.getAmountOut`; `AMMMath.initialShares`, `AMMPool._update` | 2.2–2.4; 3.2, 9.4 |
+| `AMMFactory.createPair`; `AMMPool._pullMeasured`, `_pushMeasured`, `getReserves` | 4.1; 4.2, 4.4, 6.2 |
 | `AMMPool.addLiquidity`, `_pullLater`, `_pullFromKnown`, `_pullMeasuredEnd`, `_mintLater`, `_checkInCallBalance`, `_checkInCallBalanceLater`, `_checkPayerDebit` | 5 |
 | `AMMPool.removeLiquidity`; `AMMPool.swapExactInput` | 6; 7 |
 | `AMMPool.sync`, `skim`, `_checkNoDeficit` | 8 |
@@ -364,5 +367,5 @@ Uniswap, `v2-core/contracts/UniswapV2Pair.sol` and `v2-periphery/contracts/Unisw
 
 | ID | Meaning | Where |
 |---|---|---|
-| L, W, S, Q, R, B, P, X, Z, F; F1-T; I1–I10 | tests of deposit, withdrawal, swap, quote, reserves and `sync`/`skim`, balance changes inside a call (B09 = BI-2′), LP rules, ownerless ABI and reentrancy, numerical ranges, Factory; L46 = §5.2 example; F1-T = §9.2 excess study; stateful invariants (§10) | `test/` by topic |
-| D…, U…, M*n*-*k*; T…; G…, V…, H1 | design decisions (e.g. M8-3: always measure the payer); threats; gas measurements and variants | `docs/`: `DECISIONS`, `THREAT_MODEL`, `TEST_MATRIX` §14 |
+| L W S Q R B P X Z F; F1-T; I1–I10 | tests: deposit, withdrawal, swap, quote, reserves/`sync`/`skim`, in-call balance (B09 tests BI-2′), LP rules, ABI/reentrancy, ranges, Factory; L46 = §5.2; F1-T = §9.2; invariants (§10) | `test/` |
+| D, U, A, MIN-NET, M*n*-*k*; BI; T; G, V, H1 | decisions (e.g. A8, M8-3); balance invariants; threats; gas variants | `DECISIONS` §1, §4, §5, §15; `ARCHITECTURE` §5.5; `THREAT_MODEL` §4; `TEST_MATRIX` §14 |
