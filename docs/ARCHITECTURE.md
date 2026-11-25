@@ -62,7 +62,7 @@ Names are `PROPOSED`.
 | Pool | `MINIMUM_LIQUIDITY = 1000` (`constant`) | Smallest LP units, held by `address(this)`. | `APPROVED` (U2) |
 | Pool | `FEE_BPS = 30`, `BPS_DENOMINATOR = 10_000` (`constant`) | No setter. | `APPROVED` (U1) |
 | Pool | Reentrancy lock | OZ `ReentrancyGuardTransient` (transient storage). | `APPROVED` (D11, M3-5) |
-| Factory | `getPair[token0][token1]` plus reverse lookup | At most one Pool per unordered pair. | `APPROVED` |
+| Factory | `getPair[token0][token1]` plus reverse lookup; since DECISIONS M11-4 one private entry `_pairs[token0][token1]` per sorted pair, read through `getPair` in either order | At most one Pool per unordered pair. | `APPROVED` |
 | Factory | `allPairs` | Enumeration. | `APPROVED` (U11) |
 | Factory | `surplusRecipient` (`immutable`) shared by all Pools | Constructor argument; rejects `address(0)` and the Factory itself; no setter. | `APPROVED` (M7-1) |
 | — | `kLast`, `feeTo`, owner | Absent. | `FUTURE-ONLY` |
@@ -120,7 +120,7 @@ Uniswap V2's unconditional `reserve := balance` is not used: it would silently a
 | ID | Invariant | Enforced by | Tests |
 |---|---|---|---|
 | BI-1 | After every successful call, `balance_i ≥ reserve_i` for both tokens (supported tokens). | Construction of §5.2 + BI-2/BI-5 | I2 |
-| BI-2 | (Restated 2026-11-21; original wording and reason in DECISIONS ADR-025.) `addLiquidity`, `removeLiquidity` and `swapExactInput` change each reserve only by the measured Pool-side change of their **own** transfers, each measured from a fresh snapshot (M6-8); surplus present before the call is never credited to the caller, and a transfer made by someone else during the call stays surplus (B08). **Not claimed:** that surplus is unchanged by foreign in-call transfers. | Construction of §5.2 (M5/M6) | B01–B03, B08 |
+| BI-2 | (Restated 2026-11-21; original wording and reason in DECISIONS ADR-025.) `addLiquidity`, `removeLiquidity` and `swapExactInput` change each reserve only by the measured Pool-side change of their **own** transfers, each measured from a fresh snapshot (M6-8; for a later `addLiquidity` the first-pulled token's before-reading is its entry reading, DECISIONS M11-4); surplus present before the call is never credited to the caller, and a transfer made by someone else during the call stays surplus (B08). **Not claimed:** that surplus is unchanged by foreign in-call transfers. | Construction of §5.2 (M5/M6) | B01–B03, B08 |
 | BI-2′ | **`addLiquidity` only, initial and later deposit (M8, implemented in commit 4; accepted with M8):** under truthful asset measurement, per token, the Pool's whole-call net balance increase `B_i^end − B_i^start` (start: before the first transfer; end: after the last external call) is compared with `n_i`, the net measured inside that token's own transfer window; a successful deposit requires `B_i^end ≥ B_i^start` and `B_i^end − B_i^start ≥ n_i` for both tokens and credits to reserves only `n_i`. With `reserve_i += n_i` this is `surplus_end ≥ surplus_start`; any other arrival stays surplus. Option X1 only (`reserve_i += n_i`). Not a property of `swapExactInput` / `removeLiquidity` (THREAT_MODEL T30) and not a guarantee about ERC-20 tokens in general. | On-chain: `B_i^end ≥ B_i^start && B_i^end − B_i^start ≥ n_i`, else `InCallBalanceLoss()` (DECISIONS M8-11) | B09a–B09e, L40 (TEST_MATRIX §3.2) |
 | BI-3 | `skim()` leaves reserves unchanged and, for every token that had surplus, leaves `balance_i == reserve_i`. | §7.8 | B04, R03 |
 | BI-4 | `sync()` never increases a reserve; afterwards `reserve_i = min(old reserve_i, balance_i)`; balances unchanged. | §7.7 | B05, R05 |
@@ -327,7 +327,7 @@ Measured-net deposit, P1+ with X1 (DECISIONS M8-1 to M8-13; implemented in M8 co
    - If `S > 0`:
      - deficit in either token → `ReserveDeficit()` (M6-2);
      - either reserve 0 → `InsufficientLiquidity()` (terminal pool, M6-1).
-3. **Snapshots (view calls only).** The Pool's balances of both tokens (BI-2′, M8-11) and `msg.sender`'s balances of both tokens (M8-3).
+3. **Snapshots (view calls only).** The Pool's balances of both tokens (BI-2′, M8-11) and `msg.sender`'s balances of both tokens (M8-3). Since DECISIONS M11-4, if `S > 0` the Pool readings are taken in step 2 (token0 read and checked, then token1) and reused: as the deficit check, as the BI-2′ start and as the first-pulled token's before-reading; the second-pulled token's after-reading is its BI-2′ end (6 Pool + 4 payer reads).
 4. **Pulls** (`_pullMeasured`: Pool balance before → `safeTransferFrom(msg.sender, this, amount)` → after; `n` = difference).
    - If `S == 0`: pull both `RequestMax` in the caller's order (`token1First`).
    - If `S > 0`:
@@ -500,7 +500,7 @@ Contract `AMMFactory` in `src/AMMFactory.sol` (DECISIONS M7-4).
 |---|---|---|
 | `constructor(address surplusRecipient_)` | Stores the shared recipient as `public immutable`; rejects `address(0)` and `address(this)` with `InvalidSurplusRecipient()`. | `APPROVED` (M7-1) |
 | `createPair(address tokenA, address tokenB) external returns (address pool)` | Order: either address 0 → `ZeroAddress()`; equal → `IdenticalTokens()`; sort; either without code → `TokenHasNoCode()`; registered → `PairExists()`; `new AMMPool(token0, token1, surplusRecipient)` (the Pool's own four recipient checks still apply); register both orderings; push to `allPairs`; emit `PairCreated`. No external call, so no reentrancy point and no `nonReentrant`. | `APPROVED` (D1, U11, M7-2, M7-4) |
-| `getPair(address, address)` (public mapping) | Both orders return the same address; 0 if no pair. The authoritative way to verify that a Pool is genuine. | `APPROVED` (M7-3) |
+| `getPair(address, address)` (public mapping; since DECISIONS M11-4 an explicit `view` function that sorts and reads one entry, same selector and ABI) | Both orders return the same address; 0 if no pair. The authoritative way to verify that a Pool is genuine. | `APPROVED` (M7-3) |
 | `allPairs(uint256)`, `allPairsLength()` | Enumerable list in creation order. | `APPROVED` (U11, M7-4) |
 | Deployment | Ordinary `new` (CREATE); no CREATE2. | `APPROVED` (U11) |
 | Shared `surplusRecipient` | One immutable value for every Pool of this Factory. | `APPROVED` (M7-1) |

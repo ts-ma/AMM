@@ -1083,7 +1083,7 @@ Standalone deployment and `createPair` each contain one Pool creation. They are 
 
 **Status.** Measured. No variant is adopted. DECISIONS.md is unchanged until the student decides; production adoption, merge and push each need separate approval. Report §11.4 summarises the three results.
 
-**Decision (student, 2026-11-25, DECISIONS M11-3).** All three are accepted as evidence. Experiments 1 and 2 are retained as experiments, not adopted. Experiment 3 is adopted locally on `m11-report` as commit `36ec9e3` (§14.10). Merge and push need separate approval.
+**Decision (student, 2026-11-25, DECISIONS M11-3).** All three are accepted as evidence. Experiments 1 and 2 are retained as experiments, not adopted. Experiment 3 is adopted locally on `m11-report` as commit `36ec9e3` (§14.10). Merge and push need separate approval. **Superseded in part (DECISIONS M11-4):** experiments 1 and 2 were later adopted as well, in the final combination of §14.11; the values above stay tied to their own baselines.
 
 **Report-branch checks (2026-11-25, after this experiment).**
 - Report commit **`951d55c`** adds one compact table at the end of report §11.4 (no section renumbered). The report PDF was exported from `docs/REPORT.md` at `951d55c` (same method as §14.8: Markdown → HTML with the same stylesheet, Edge headless print, A4, 10 pt): **10 pages** (limit 10), SHA-256 `72c2700e3485a5f60e23a54784ab670d1dd74ae4df3f155bfbccb3a91fa37a11`.
@@ -1091,6 +1091,8 @@ Standalone deployment and `createPair` each contain one Pool creation. They are 
 - `git diff --stat 04eb336 951d55c -- src test lib foundry.toml` is empty: no production code, test, library or configuration change on `m11-report` after the accepted regression. Later commits on `m11-report` change only `docs/TEST_MATRIX.md`.
 
 ### 14.10 Adoption of constant LP metadata and G02 refresh (2026-11-25, branch `m11-report`, commit `36ec9e3`)
+
+*Historical: `36ec9e3` was the final code until the combination of §14.11 (`1ab26ec`); its `view` getters and the values below are kept as recorded.*
 
 **Production change (DECISIONS M11-3).**
 - Commit **`36ec9e3`** (`refactor:`) changes only `src/AMMPool.sol`, by +17 / −1 lines. It is the experiment 3 change of §14.9 without the experiment comments.
@@ -1129,6 +1131,70 @@ Standalone deployment and `createPair` each contain one Pool creation. They are 
   - all 32 test functions and 15 `src/` / `test/` paths cited in the report exist.
 - `git diff --stat 04eb336 dbb6bff -- src test lib foundry.toml` lists only `src/AMMPool.sol` (+17 / −1, M11-3). The same diff from `36ec9e3` is empty.
 - The earlier export from `951d55c` (§14.9) is superseded.
+
+### 14.11 Final combination: all three experiments adopted (2026-11-25, branch `m11-report`, DECISIONS M11-4)
+
+**Production commits** (on `fb76ca9`; each `refactor:` commit ports the variant's `src/` diff, not the old file, so the adopted metadata of `36ec9e3` is kept):
+
+| Commit | Change | Tests in the same commit |
+|---|---|---|
+| `4ef6ceb` | `name()` declared `pure`; `symbol()` stays `view` | none needed: `test/AMMPoolLiquidity.t.sol` asserts both exact strings, `AMMFactoryIntegration` direct = Factory metadata |
+| `57b8f53` | Factory: one private entry `_pairs[token0][token1]`; explicit sorting `getPair` (port of `83bdece`) | `test/AMMFactoryPairLookup.t.sol` (3): both orders, missing and identical pairs, duplicates in either order, `PairCreated`, `allPairs`; fuzz: only the created pair is registered |
+| `5cc10af` | Later-deposit snapshot reuse (port of `9ae671a`) | `test/AMMPoolSnapshotReuseCalls.t.sol` (5): 6 Pool + 4 payer reads, 2 `transferFrom`, no other call, for ORD and L46 in both orders; initial control 8 + 4. `test/AMMPoolSnapshotReuseBehaviour.t.sol` (8): exact receipts, payer debits, shares, reserves, `LiquidityAdded`, full rollback for one-unit-tight `maxDebit` / `maxExcess` / `minShares`, deficit error order in all four cases; fixture `test/utils/SnapshotReuseBase.sol` |
+| `1ab26ec` | `test/gas/GasM11Combined.t.sol` (19 measurement tests, no gas assertions) | — |
+
+Cross-token final reconciliation on the later path stays covered by the unchanged suites: BI-2′ with a hook token removing or adding the other token during its own `transferFrom`, hook as token0 and as token1, both pull orders (`test/AMMPoolInCallBalance.t.sol`), and the whole-call payer bound (`test/AMMPoolPayerDebit.t.sol`).
+
+**ABI** (`out/*.json` after `forge build`, compared entry by entry against `04eb336`; no ABI copy is tracked in the repository): `AMMPool` 62 entries, one difference: `name()` `stateMutability` `view` → `pure`. `AMMFactory` 12 entries, identical. The same holds at `4ef6ceb` alone.
+
+**`view` → `pure` alone** (`36ec9e3` vs `4ef6ceb`, same harness): metadata-free runtime bytecode (`FOUNDRY_CBOR_METADATA=false FOUNDRY_BYTECODE_HASH=none forge inspect AMMPool deployedBytecode`) identical (SHA-256 `5b63b262…a456` on both); `name()` 3,615, `symbol()` 3,625, Pool deployment 2,351,556 and `createPair` 2,246,698 on both. No separate gas effect; the metadata saving is the removed string storage reads (§14.9 experiment 3).
+
+**Trace check** (`-vvvv` text trace of the measured call, `balanceOf` counted by account argument): final code, later ORD token0 / token1 first and L46 taxed second / first: 6 Pool + 4 payer, 2 `transferFrom`; initial 8 + 4. `04eb336`: later 10 + 4, initial 8 + 4. Agrees with the recorded-access tests.
+
+**Comparison method.** `test/gas/GasM11Combined.t.sol` at `1ab26ec` was copied unchanged into a detached worktree at `04eb336` (SHA-256 `dc8e9756…0ced` on both sides). Both sides ran `forge test --match-contract "GasM11Combined|GasG02" -vv` with forge 1.9.0 and the same `forge config` (solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`). G02 rows use `test/gas/GasG02.t.sol`, unchanged since `04eb336`. Every measured call is a top-level call (cold); in-transaction `getPair` pairs run inside one probe call. Fixtures as §14.9 (ORD, L46, INIT). Δ = final − baseline; negative = saving.
+
+| Operation [measured] | `04eb336` | final `1ab26ec` | Δ | % |
+|---|---:|---:|---:|---:|
+| deploy `AMMFactory` | 2,840,966 | 3,058,070 | +217,104 | +7.64 |
+| deploy `AMMPool` (direct) | 2,424,914 | 2,595,417 | +170,503 | +7.03 |
+| `createPair` first (`allPairs` 0 → 1) | 2,316,852 | 2,451,519 | +134,667 | +5.81 |
+| `createPair` subsequent (1 → 2) | 2,299,740 | 2,434,407 | +134,667 | +5.86 |
+| `addLiquidity` initial (token0 first) | 231,973 | 231,969 | −4 | −0.00 |
+| later ORD, token0 first, finite `maxDebit` | 108,158 | 104,721 | −3,437 | −3.18 |
+| later ORD, token1 first, finite `maxDebit` | 108,180 | 104,722 | −3,458 | −3.20 |
+| later L46 (§5.2 taxed), taxed second | 193,456 | 189,883 | −3,573 | −1.85 |
+| later L46, taxed first (re-plan) | 193,847 | 190,253 | −3,594 | −1.85 |
+| `getPair` cold, existing, sorted | 5,975 | 6,076 | +101 | +1.69 |
+| `getPair` cold, existing, reversed | 5,975 | 6,086 | +111 | +1.86 |
+| `getPair` cold, missing, sorted | 5,972 | 6,073 | +101 | +1.69 |
+| in-tx sorted, sorted: 1st / 2nd | 5,764 / 1,255 | 5,865 / 1,356 | +101 / +101 | +1.75 / +8.05 |
+| in-tx reversed, reversed: 1st / 2nd | 5,764 / 1,255 | 5,875 / 1,366 | +111 / +111 | +1.93 / +8.84 |
+| in-tx sorted, then reversed: 1st / 2nd | 5,764 / 3,255 | 5,865 / 1,366 | +101 / −1,889 | +1.75 / −58.03 |
+| `name()` | 6,322 | 3,615 | −2,707 | −42.82 |
+| `symbol()` | 6,321 | 3,625 | −2,696 | −42.65 |
+| `swapExactInput` token0 in (control) | 82,539 | 82,540 | +1 | +0.00 |
+| `removeLiquidity` partial (control) | 94,105 | 94,105 | 0 | 0.00 |
+| runtime `AMMPool` / `AMMFactory` (B) | 10,553 / 12,770 | 11,534 / 13,780 | +981 / +1,010 | +9.30 / +7.91 |
+| initcode `AMMPool` / `AMMFactory` (B) | 11,709 / 12,968 | 12,657 / 13,978 | +948 / +1,010 | +8.10 / +7.79 |
+
+The Pool deployment is contained in `createPair`; the three creation rows are separate comparisons, not additive.
+
+**G02 on the final code** (same harness and method as §14.6 / §14.10), `04eb336` → `1ab26ec`: `addLiquidity` initial 232,004 → 232,000 (−4); later token0 binds 108,814 → 105,377 (−3,437); later token1 binds, token1First 109,052 → 105,594 (−3,458); `swapExactInput` 82,539 / 82,587 → 82,540 / 82,588 (+1 each); `createPair` 2,316,864 → 2,451,531 (+134,667); deploy `AMMPool` 2,422,397 → 2,592,900 (+170,503); deploy `AMMFactory` 2,838,448 → 3,055,552 (+217,104). Unchanged: `removeLiquidity` 94,105 / 94,144, `getAmountOut` 8,474, `getReserves` 7,376, `sync` 40,067 / 44,774, `skim` 101,777 / 39,905, LP `transfer` 54,879, `approve` 49,430, `transferFrom` 57,659, calibration `balanceOf` 5,479.
+
+**Interaction, not additivity.** The single-experiment Pool deployment deltas (+243,957, −73,358; §14.9) sum to +170,599; the combination measures +170,503. `createPair`: +243,957 − 70,154 − 22,238 = +151,565 summed, +134,667 measured. The combined values above supersede the sums.
+
+**Per-pool scenario [estimate from the measured entries above].** Create a Pool through an already deployed Factory, one initial deposit, then `N` ordinary later deposits, token0 first, finite `maxDebit`:
+Δ(N) = Δ`createPair` + Δinitial + N · Δlater = +134,667 − 4 − 3,437 N.
+- N = 10: +100,293. N = 100: −209,037. Smallest N with Δ(N) ≤ 0: **N = 40** (N = 39: +620; N = 40: −2,817). The same with `createPair` subsequent (equal Δ).
+- Including the deployment of a new Factory (+217,104, once): N = 10: +317,397; N = 100: +8,067; break-even **N = 103** (N = 102: +1,193).
+- Paid on-chain `getPair` calls add per lookup: +101 (sorted, cold or repeated), +111 (reversed), −1,889 for a reversed lookup after a sorted one in the same transaction. Off-chain queries are free.
+- The earlier "≈ 71 deposits" (§14.9 experiment 1) was the snapshot-reuse experiment alone; it is superseded for the final code.
+
+**Verification on `1ab26ec`** (the final production-code and test commit):
+- `forge build --force`: successful; warnings 2018 for `symbol()` (accepted, M11-4) and the existing one in `test/AMMPoolMeasuredDeposit.t.sol`.
+- `forge test`: **527 passed, 0 failed, 59 suites** (492 + 3 Factory lookup + 5 call-count + 8 behaviour + 19 combined-harness tests; 4 new suites).
+- `FOUNDRY_FUZZ_RUNS=10000 forge test`: **527 passed, 0 failed, 59 suites**.
+- `git diff --stat 04eb336 1ab26ec -- src lib foundry.toml` lists only `src/AMMFactory.sol` and `src/AMMPool.sol`.
 
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
