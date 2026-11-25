@@ -1,6 +1,6 @@
 # DECISIONS — Architecture Decision Register
 
-**Last updated:** 2026-11-23
+**Last updated:** 2026-11-25
 
 **Sources:** Architecture Specification v0.3 (2026-11-15, full text supplied by the student in the design conversation) and every decision the student subsequently approved explicitly. This file is the authoritative record of decision status; where another document disagrees, this file wins and the other document must be corrected.
 

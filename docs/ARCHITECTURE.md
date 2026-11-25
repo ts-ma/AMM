@@ -1,6 +1,6 @@
 # ARCHITECTURE — AMM Specification (Pre-Implementation)
 
-**Last updated:** 2026-11-23
+**Last updated:** 2026-11-25
 
 **Status:** Target architecture, partly implemented (M2–M7 accepted; M8 accepted 2026-11-23). Implementation status per test is recorded only in [TEST_MATRIX.md](TEST_MATRIX.md). This document is not evidence of verification and is not an audit.
 

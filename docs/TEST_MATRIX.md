@@ -1,8 +1,8 @@
 # TEST MATRIX — Foundry Test Plan
 
-**Last updated:** 2026-11-23
+**Last updated:** 2026-11-25
 
-**Status:** Rows marked `PASSED` (M1–M6) are implemented and were run. Everything else is a plan, not a record of passing tests. "Maths level" means the library function was tested; the Pool function that uses it does not exist yet. Record a result and the test function name only after the test has actually been run.
+**Status:** Rows marked `PASSED` are implemented and were run; a row without a recorded result is not a record of a passing test. **Final regression:** §14.11, on commit `e951544` (527 tests in 59 suites passed with `forge test` and with `FOUNDRY_FUZZ_RUNS=10000 forge test`). Earlier regression totals in §14 (for example 492 tests in 55 suites) belong to the historical commits named next to them. "Maths level" in an M1–M2 row means the library function was tested at that milestone, before the Pool function that uses it existed. Record a result and the test function name only after the test has actually been run.
 
 Tests that depend on a `PROPOSED` or `PENDING` decision must not be written before that decision is approved.
 
@@ -469,7 +469,7 @@ A fourth fuzz test feeds raw `uint256` triples to the classifier and checks the 
 | I7 | BI-5 and BI-6 hold on every outbound transfer | `PASSED` for BI-5 (M10): remove, swap and skim — the Pool's balance falls by exactly the expected amount. BI-6 part: the return value equals the recipient's measured increase and matches the token model; minima are 0 in the handler, so the MIN-NET threshold itself is covered by unit tests only |
 | I8 | `skim()` sends only `balance − reserve`, only to `surplusRecipient` | `PASSED` (M10, both handler suites): `skim` sends exactly the surplus (Pool side), leaves reserves unchanged, and `surplusRecipient` is credited the surplus minus the token's tax. No other address is credited: each token's `totalSupply` falls by exactly the burned tax (0 for Tier 0), which together with the exact Pool decrease and the exact recipient credit implies that the combined balance of all other addresses is unchanged; in addition the balances of the `skim()` caller (the handler) and of each actor are checked individually. Sensitivity check (per-file restore of `src/` and of the handler, hashes verified): mutant "half the surplus to `msg.sender`" is first killed by the recipient-credit assertion; with that assertion temporarily removed it is still killed by I8 alone (Tier 0: caller balance; taxed: supply accounting, the extra transfer burns extra tax). Scope: addresses outside the model can only be covered by the combined supply statement |
 | I9 | Only `sync()` lowers a reserve without an outbound transfer; no function moves surplus into reserves | `PASSED` (M10) — per call: each reserve changes exactly by the call's own measured amount (add `+n_i`, remove `−amount_i`, swap `+a` / `−out`), `sync` changes nothing (no deficit with supported tokens), donations and LP transfers change no reserve; global: `balance_i − reserve_i` equals the ghost surplus (donations minus `skim`) |
-| I10 | (new, approved conditionally 2026-11-23) Per-share value of existing LPs never decreases: for every successful later `addLiquidity` and `removeLiquidity`, `r_i'·S ≥ r_i·S'` for both tokens; for every successful swap `S' = S` and `r0'·r1' ≥ r0·r1`; `skim`, donations and LP transfers change neither reserves nor `S`. Hence `r0·r1/S²` never decreases along these operations. Premises: supported tokens, truthful `balanceOf`, `S > 0`; `sync()` and the initial deposit excluded. Proof per operation: add `n_i·S ≥ σ·r_i` (σ floored); remove `S·amount_i ≤ shares·r_i` (floored); swap §6.5 | `PASSED` (M10) — exact 512-bit cross-multiplied comparisons after every call |
+| I10 | (approved 2026-11-23, implemented M10) The pool-level measure `r0·r1/S²` never decreases along later deposits, withdrawals, swaps, `skim`, donations and LP transfers (report §3.3); it is not the market value of a share. For every successful later `addLiquidity` and `removeLiquidity`, `r_i'·S ≥ r_i·S'` for both tokens; for every successful swap `S' = S` and `r0'·r1' ≥ r0·r1`; `skim`, donations and LP transfers change neither reserves nor `S`. Hence `r0·r1/S²` never decreases along these operations. Premises: supported tokens, truthful `balanceOf`, `S > 0`; `sync()` and the initial deposit excluded. Proof per operation: add `n_i·S ≥ σ·r_i` (σ floored); remove `S·amount_i ≤ shares·r_i` (floored); swap §6.5 | `PASSED` (M10) — exact 512-bit cross-multiplied comparisons after every call |
 
 `reserve0 × reserve1` monotonicity is required per swap only (BI-9), not across withdrawals or `sync()`; across add / remove / swap the per-share form I10 holds.
 
@@ -780,7 +780,7 @@ Earlier reuse variants (§14.5) target readings 1–4 (VC), 3 with 7 (VB) and 9/
 - Baseline: `m11-report` at `8c7aefe`. Its `src/`, `test/`, `lib/` and `foundry.toml` are identical to `04eb336`: `git diff --stat 04eb336 8c7aefe -- src test lib foundry.toml` is empty.
 - Experiment: local branch `m11-router-exp`, commit **`da59581`**, in a worktree in the scratchpad. Not merged, not pushed. `src/AMMPool.sol` and all project tests are unchanged in `da59581`; the new code is under `src/experiment/`, `test/experiment/` and `experiment/`.
 - Configuration (`forge config` in the worktree): solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`, OZ v5.7.0, forge 1.9.0 (`6056c58`).
-- These results are separate from the accepted production regression on `04eb336` (492 tests in 55 suites, recorded in report §10.6). That regression was not rerun on the production branch for this experiment.
+- These results are separate from the production regression of that time, on `04eb336` (492 tests in 55 suites; historical, superseded by §14.11 on `e951544`). That regression was not rerun on the production branch for this experiment.
 
 **Variants (one build, so all gas values are comparable with each other).** The three Pool variants are generated from `src/AMMPool.sol` by `experiment/gen_variants.py`.
 
@@ -919,7 +919,7 @@ The refund comes from the Router clearing its balances and approvals back to 0. 
 - Each harness is byte-identical on commit 1 and commit 2. Commands: `forge test --match-contract GasSnapshotReuse|GasFactoryPair|GasLpMetadata -vv`. Each was run twice per commit, with identical values.
 - Sizes come from `forge build --sizes`.
 - Call counts come from Foundry's recorded account accesses (`vm.startStateDiffRecording`), run in separate tests and never inside a gas interval. Calls are classified by token target, caller, selector and, for `balanceOf`, the account argument (Pool, payer, other). The ORD token0-first deposit was cross-checked once against the `-vvvv` text trace.
-- The full suite (`forge test`, default fuzz runs) was run on both commits of every branch. Experiment 1 was also run with `FOUNDRY_FUZZ_RUNS=10000`. These totals include each branch's own experiment tests. They are **separate from the historical production regression** (492 tests in 55 suites on `04eb336`, report §10.6), which was not rerun on `m11-report`.
+- The full suite (`forge test`, default fuzz runs) was run on both commits of every branch. Experiment 1 was also run with `FOUNDRY_FUZZ_RUNS=10000`. These totals include each branch's own experiment tests. They are **separate from the historical production regression** (492 tests in 55 suites on `04eb336`, the report §10.6 of that time; superseded by §14.11 on `e951544`), which was not rerun on `m11-report`.
 
 | Branch | Commit 1 (production code) | Commit 2 (variant) | Variant, 10,000 fuzz runs |
 |---|---|---|---|
@@ -1103,7 +1103,7 @@ Standalone deployment and `createPair` each contain one Pool creation. They are 
 - The `AMMPool` ABI JSON (`forge inspect AMMPool abi --json`) is identical to the `04eb336` code. `name()` and `symbol()` stay `view`.
 - With `FOUNDRY_CBOR_METADATA=false FOUNDRY_BYTECODE_HASH=none`, the runtime bytecode of `AMMPool` and `AMMFactory` at `36ec9e3` is byte-identical to the measured variant `8296cae`. The paired deltas of §14.9 experiment 3 therefore apply to the production code.
 
-**Verification on `36ec9e3`** (the final production-code and test commit; configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`, forge 1.9.0):
+**Verification on `36ec9e3`** (historical: the final production-code and test commit until §14.11; configuration from `forge config`: solc 0.8.38, optimizer 200 runs, `osaka`, `via_ir = false`, `isolate = true`, forge 1.9.0):
 - `forge build`: successful. Its warnings include 2018 for the two `view` getters (accepted, M11-3) and the existing one in `test/AMMPoolMeasuredDeposit.t.sol`.
 - `forge test`: **492 passed, 0 failed, 55 suites**.
 - `FOUNDRY_FUZZ_RUNS=10000 forge test`: **492 passed, 0 failed, 55 suites**.
