@@ -1081,6 +1081,11 @@ Standalone deployment and `createPair` each contain one Pool creation. They are 
 
 **Status.** Measured. No variant is adopted. DECISIONS.md is unchanged until the student decides; production adoption, merge and push each need separate approval. Report §11.4 summarises the three results.
 
+**Report-branch checks (2026-11-25, after this experiment).**
+- Report commit **`951d55c`** adds one compact table at the end of report §11.4 (no section renumbered). The report PDF was exported from `docs/REPORT.md` at `951d55c` (same method as §14.8: Markdown → HTML with the same stylesheet, Edge headless print, A4, 10 pt): **10 pages** (limit 10), SHA-256 `72c2700e3485a5f60e23a54784ab670d1dd74ae4df3f155bfbccb3a91fa37a11`.
+- Cross-references checked on that text: all 25 `docs/REPORT.md §…` references in `src/` name an existing report section, and every identifier in the report's code index (§13.2) exists in `src/`.
+- `git diff --stat 04eb336 951d55c -- src test lib foundry.toml` is empty: no production code, test, library or configuration change on `m11-report` after the accepted regression. Later commits on `m11-report` change only `docs/TEST_MATRIX.md`.
+
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
 Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
