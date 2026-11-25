@@ -1196,6 +1196,8 @@ The Pool deployment is contained in `createPair`; the three creation rows are se
 - `FOUNDRY_FUZZ_RUNS=10000 forge test`: **527 passed, 0 failed, 59 suites**.
 - `git diff --stat 04eb336 1ab26ec -- src lib foundry.toml` lists only `src/AMMFactory.sol` and `src/AMMPool.sol`.
 
+**Final report export (2026-11-25).** The report PDF was exported from `docs/REPORT.md` at **`282a8ef`** (method as §14.10: Markdown → HTML, Edge headless print, A4, 10 pt, same stylesheet). Result: **10 pages** (limit 10), SHA-256 `0e0846c1a30f5790fb842a3bbf4225b280202406d5cf19b03aecab1364ddf2f1`. The introduction of Table 11.2 is on the table's page (page 8). To stay within 10 pages, §11.4's single-experiment table became one paragraph with the same historical values, and two §11.1/§11.4 paragraphs were shortened. References checked in both directions on that text: 22 `@custom:report` tag lines in `src/` (`AMMPool.sol` 16, `AMMFactory.sol` 2, `libraries/AMMMath.sol` 3, `interfaces/IAMMPool.sol` 1) with 40 section references to 25 distinct sections, all present; all 17 identifiers of §13.2 exist in `src/`; all 32 test functions and 17 `src/` / `test/` paths cited exist. `git diff --stat 1ab26ec 282a8ef -- src test lib foundry.toml` is empty. The export from `dbb6bff` (§14.10) is superseded.
+
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
 Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
