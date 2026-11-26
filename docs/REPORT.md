@@ -91,7 +91,7 @@ Every Pool uses the same LP name and symbol, so wallets cannot tell pools apart 
 - `removeLiquidity`: checks → burn and reserves → two outbound transfers → event (the Checks–Effects–Interactions order).
 - `skim` sends surplus without writing reserves; `sync` writes reserves without a transfer.
 
-While a token call runs, the Pool's five state-changing entry points (`addLiquidity`, `removeLiquidity`, `swapExactInput`, `sync`, `skim`) revert on re-entry: they share one `nonReentrant` lock, and `_update` mints or burns LP only while it is held. Still callable: the views (`getReserves`, `getAmountOut`, `balanceOf`, `totalSupply`) and LP `transfer`/`transferFrom`/`approve`, which change neither reserves nor supply. A callback reads pre-call reserves and supply during an inbound pull and post-swap reserves during the outbound transfer [test] `test_X05_midSwapInboundReadsPreCallState`, `test_X05_midSwapOutboundReadsPostEffectReserves`. The lock is per Pool and relies on a truthful `balanceOf` (§4.5).
+While a token call runs, the Pool's five state-changing entry points (`addLiquidity`, `removeLiquidity`, `swapExactInput`, `sync`, `skim`) revert on re-entry: they share one `nonReentrant` lock, and `_update` mints or burns LP only while it is held. Still callable: the views (`getReserves`, `getAmountOut`, `balanceOf`, `totalSupply`) and LP `transfer`/`transferFrom`/`approve`, which change neither reserves nor supply. A callback reads pre-call reserves and supply during an inbound pull and post-swap reserves during the outbound transfer [test] `test_X05_midSwapInboundReadsPreCallState`, `test_X05_midSwapOutboundReadsPostEffectReserves`. The reentrancy guard is local to each Pool. The Pool's transfer measurements assume that each token's `balanceOf` reports balances accurately (§4.5).
 
 ### 4.3 `AMMMath`
 
@@ -183,7 +183,7 @@ Both are defined in §4.2. A8 rejects tokens that charge the Pool extra or move 
 
 ### 6.3 Small positions
 
-If `r_i/S < 1` (e.g. a 2-decimal token against an 18-decimal one), fewer than `⌈S/r_i⌉` shares pay 0 of token i and revert `InsufficientLiquidityBurned`, as in Uniswap V2. [test] `test_W12_positionBelowThresholdCannotExit`: `S = 10¹²`, `r = 10⁴`; a remainder of 5·10⁷ shares cannot exit until it reaches 99,995,001.
+If `r_i/S < 1` (e.g. a 2-decimal token against an 18-decimal one), fewer than `⌈S/r_i⌉` shares pay 0 of token i and revert `InsufficientLiquidityBurned`, as in Uniswap V2. [test] `test_W12_positionBelowThresholdCannotExit`: after Bob's partial withdrawal, total LP supply is 1,000,050,000,000 and the reserve of the lower-precision token is 10,001 smallest units. Receiving one unit therefore requires at least ⌈1,000,050,000,000 / 10,001⌉ = 99,995,001 shares. Bob's remaining 50,000,000 shares fall below this threshold.
 
 ### 6.4 Terminal pool
 
@@ -254,7 +254,7 @@ BI-2′ guards `addLiquidity` only. `swapExactInput` and `removeLiquidity` rely 
 
 ## 10. Verification
 
-Unit tests use exact values from independent models; fuzz tests cover the documented ranges; two stateful invariant suites (exact and 1 %/3 % taxed tokens, 256 runs × 500 random calls) check after every call: LP supply and lock (I1), balance ≥ reserve (I2), the swap formula and `k` (I3), debit ≤ cap and ≤ `maxDebit` (I6), exact outbound amounts (I7), `skim` only to `surplusRecipient` (I8), surplus changes only by donation and `skim` (I9), and §3.3 (I10). Every feature had a mutation check (deliberate bugs in one source file that a test had to catch); survivors were analysed and test gaps closed. `forge lint` findings were triaged (TEST_MATRIX §16). **Not done:** formal verification, symbolic execution, slither, Echidna/Medusa, fork tests, an external audit.
+Unit tests use exact values from independent models; fuzz tests cover the documented ranges; two stateful invariant suites (exact and 1 %/3 % taxed tokens, 256 runs × 500 random calls) check after every call: LP supply and lock (I1), balance ≥ reserve (I2), the swap formula and `k` (I3), debit ≤ cap and ≤ `maxDebit` (I6), exact outbound amounts (I7), `skim` only to `surplusRecipient` (I8), surplus changes only by donation and `skim` (I9), and §3.3 (I10). Every feature had a mutation check; survivors were analysed and test gaps closed. `forge lint` findings were triaged (TEST_MATRIX §16). **Not done:** formal verification, symbolic execution, slither, Echidna/Medusa, fork tests, an external audit.
 
 **Final regression** on the final code: `forge build` succeeded; **527 tests in 59 suites passed, 0 failed**, both with the default fuzz runs and with `FOUNDRY_FUZZ_RUNS=10000`; the invariant suites use their own 256 × 500 setting in both runs. Record: `docs/TEST_MATRIX.md` §14.11.
 
@@ -275,7 +275,7 @@ Unit tests use exact values from independent models; fuzz tests cover the docume
 
 | | Change | Measured effect [gas] | Decision |
 |---|---|---|---|
-| Adopted | `removeLiquidity` burns the caller's shares **before** computing the amounts (`mulDiv`) | failing for insufficient LP 27,926 instead of 30,469; success −6 (TEST_MATRIX §14.1) | kept: cheaper failure, clearer error (`ERC20InsufficientBalance`, not an overflow panic) |
+| Adopted | `removeLiquidity` burns the caller's shares **before** computing the amounts (`mulDiv`) | failing for insufficient LP 27,926 instead of 30,469; success −6 (TEST_MATRIX §14.1) | kept: cheaper failure, clearer error |
 | Adopted | LP `name()` / `symbol()` return constants instead of two stored strings | getters −2,707 / −2,696 (Table 11.2) | kept; `pure` alone changed no gas |
 | Adopted | A later deposit reuses the Pool's balance readings (6 + 4 reads instead of 10 + 4; §5.3); the Factory stores each pair once and `getPair` sorts | Table 11.2 | kept; relies on only read-only calls between a reading and its reuse |
 | Rejected | VP: `uint112` reserves in one storage slot (as Uniswap V2) | ≈ −4,300 per add/remove/swap, +159,273 per deployment | caps reserves at `2¹¹²` (13 range tests fail) |
@@ -330,7 +330,7 @@ Most important for users and LPs:
 2. **Excess is not refunded**; with taxed tokens it is first-order in the tax, bounded only by `maxExcess` (§5.7).
 3. **`minShares` bounds a share count, not value**; no per-token deposit minimum; the first deposit cannot be fully protected from front-running (§5.5, §5.6).
 4. **A deficit of any size freezes the pool** (§8.2, §8.3) until `sync()` writes the reserve down (LPs bear the write-down pro rata, plus the arbitrage after the price jump) or a third party tops the balance back up (reserves unchanged, no write-down).
-5. **The excess inflation channel** is bounded but open; the supported-token path is model-only (§9.2).
+5. **The excess inflation channel** is bounded but open. Each depositor can bound the unmatched contribution with `maxExcess`. For supported tokens, the fee channel was tested at reduced scale. Only the full-scale result is a model estimate (§9.2).
 
 | Other disclosed limitations | § |
 |---|---|
