@@ -6,10 +6,12 @@ Solidity 0.8.38 · Foundry (forge 1.9.0) · OpenZeppelin Contracts v5.7.0 · opt
 
 ### 1.1 Components
 
+This automated market maker (AMM) lets traders exchange one ERC-20 token for another using a pool of two assets. Liquidity providers (LPs) supply those assets and receive shares issued by the Pool itself. They can later redeem their shares for a proportional amount of each recorded reserve.
+
 | Contract | File | Role |
 |---|---|---|
 | `AMMFactory` | `src/AMMFactory.sol` | Deploys one Pool per unordered token pair; registry. No owner, no funds. |
-| `AMMPool` | `src/AMMPool.sol` | Holds two tokens, records reserves, prices swaps, and **is** the LP token (OpenZeppelin `ERC20`). No owner, immutable. |
+| `AMMPool` | `src/AMMPool.sol` | Holds the two assets, records reserves, prices swaps and issues ERC-20 LP shares. |
 | `AMMMath` | `src/libraries/AMMMath.sol` | Pure maths: swap quote with fee, initial-share square root. |
 | `IAMMPool` | `src/interfaces/IAMMPool.sol` | Deposit parameter struct `AddLiquidityParams`. |
 
@@ -99,7 +101,7 @@ Internal pure functions compiled into the Pool; tested on their own (`test/AMMMa
 
 ### 4.4 Recorded reserves versus balances
 
-The Pool never prices from `balanceOf`. Per token, `balance − reserve` is **surplus** if positive and a **deficit** if negative (a token removed Pool balance; unsupported tokens only). Every write to `reserve0`/`reserve1` is in `addLiquidity` (first deposit), `_mintLater` (later deposit), `removeLiquidity`, `swapExactInput` or `_syncToken` (downward only) [source]. Hence: a direct transfer with no deficit is surplus; the per-share claim on recorded reserves is unchanged, and the tokens leave only through `skim()`. A direct transfer during a deficit refills the missing backing up to the reserve; reserves stay unchanged and only the part above them is surplus (§8.3). A deposit's unmatched excess and the swap fee do enter the reserves, without new shares (§5.7). So a donation can neither move the price through `sync` nor raise share value; the lock (§3.2) bounds the excess and fee channels (§9.2).
+The Pool never prices from `balanceOf`. Per token, `balance − reserve` is **surplus** if positive and a **deficit** if negative (a token removed Pool balance; unsupported tokens only). Every write to `reserve0`/`reserve1` is in `addLiquidity` (first deposit), `_mintLater` (later deposit), `removeLiquidity`, `swapExactInput` or `_syncToken` (downward only) [source]. Hence: a direct transfer with no deficit is surplus; the per-share claim on recorded reserves is unchanged, and the tokens leave only through `skim()`. A direct transfer during a deficit refills the missing backing up to the reserve; reserves stay unchanged and only the part above them is surplus (§8.3). In a later deposit, the unmatched amount enters recorded reserves without earning the depositor additional shares. The depositor limits this amount separately for each token using `maxExcess_i` (§5.4). Swap fees also stay in reserves (§2.2). The 1,000 permanently locked shares retain their proportional claim on those reserves (§3.2).
 
 ### 4.5 Supported tokens
 
@@ -140,7 +142,7 @@ An immediate full redemption returns `(907, 1,798)` [test] against a payment of 
 2. **Snapshots** of the Pool's and the payer's balances of both tokens. A later deposit reuses the Pool readings of step 1 (only read-only calls in between): 6 Pool + 4 payer reads [test] `test/AMMPoolSnapshotReuseCalls.t.sol`.
 3. **Step 2** (`_pullLater`): the largest pair at the pool ratio within both caps, rounded down. The exact 512-bit product is formed once, so huge caps never overflow.
 4. **Pull and measure** the first token (`_pullFromKnown`: its before-balance is its reading from step 1); only if it delivered a different amount than planned, re-plan the second token from what arrived; then pull and measure the second token (`_pullMeasuredEnd`).
-5. **After the last transfer**: BI-2′ (`addLiquidity` only; initial deposit `_checkInCallBalance`, later deposits `_checkInCallBalanceLater`, reusing the second transfer's closing balance and rereading the first token): from the start snapshot to the end, each Pool balance rose by at least this call's own measured receipt, so no foreign removal hides inside the call; then the payer-debit bound (`_checkPayerDebit`).
+5. **After both transfers**, the Pool checks each token separately: its final balance must be at least its starting balance plus the receipt measured for this deposit (BI-2′). The initial-deposit path uses `_checkInCallBalance`. For a later deposit, `_checkInCallBalanceLater` reuses the second token's closing balance and reads the first token again. `_checkPayerDebit` then checks the payer's net debit against each `maxDebit_i`.
 6. **Shares and effects** (`_mintLater`): `σ`, `minShares`, checked `S + σ`, the excess bound, then `reserve_i += n_i` (excess included) and mint.
 
 ### 5.4 What each protection promises
@@ -151,7 +153,7 @@ An immediate full redemption returns `(907, 1,798)` [test] against a payment of 
 | `maxDebit_i` | Bounds the payer's net decrease of token i over the call. [test] `AMMPoolPayerDebit` (plain, inclusive- and exclusive-fee tokens, both pull orders); invariant I6 | What the Pool receives. With a router, it protects the router. |
 | `maxExcess_i` | Bounds the unmatched amount of token i left in reserves. [test] `AMMPoolMaxExcess`, `AMMPoolMaxExcessTier0`, §5.2 example | A refund. |
 | `minShares` | A minimum number of shares. [test] `test_L18_minSharesPlusOneReverts`, §5.2 example | Any value, price or token amount (§5.6). |
-| BI-2′ (`addLiquidity` only) | No foreign in-call loss of Pool balance goes unnoticed; a foreign in-call gift stays surplus. [test] `AMMPoolInCallBalance` | Protection against a lying `balanceOf`; swap and remove (§9.6). |
+| BI-2′ (`addLiquidity` only) | For each token, the Pool checks final balance ≥ starting balance + measured receipt across the whole deposit. [test] `AMMPoolInCallBalance` | Protection against a lying `balanceOf`; swap and remove (§9.6). |
 
 For exact tokens the excess is pure rounding: [proof] `u_i < r_i/S + r_i/r_j`; [test] at extreme requests, `testFuzz_F1T1_extremeRequest`.
 
@@ -165,7 +167,7 @@ The path (initial or later) is chosen from `totalSupply()` at execution; the int
 
 ### 5.6 The scope of `minShares`
 
-It bounds a share count only. With Tier 0 tokens and only swaps between quote and deposit: [proof]+[test] `σ'²·k_q ≤ S²·A·B` (`testFuzz_Z10_swapOnlyMintUpperBound`); [proof] success with `σ' ≥ m` **requires** `r0' ∈ [k_q·m/(S·B), S·A/m]`, a necessary condition and not a price guarantee ([model] 59,521 samples, none outside). A general claim that `minShares` stops sandwiches was retracted with a counterexample (REPORT_NOTES §2).
+It bounds a share count only. Consider exact-transfer tokens and assume that only swaps occur between the quote and the deposit, so LP supply `S` stays fixed. Let `A` and `B` be the request caps for token0 and token1, `m > 0` the minimum share count, and `k_q` the reserve product at quote time. At execution, `r0'` is the token0 reserve immediately before the deposit and `σ'` is the number of shares the deposit would mint. [proof]+[test] `σ'²·k_q ≤ S²·A·B` (`testFuzz_Z10_swapOnlyMintUpperBound`); [proof] success with `σ' ≥ m` **requires** `r0' ∈ [k_q·m/(S·B), S·A/m]`, a necessary condition and not a price guarantee ([model] 59,521 samples, none outside). If the token0 reserve lies outside this interval, the deposit cannot mint `m` shares within the two request caps. A reserve inside the interval does not by itself guarantee success. A general claim that `minShares` stops sandwiches was retracted with a counterexample (REPORT_NOTES §2).
 
 ### 5.7 Why the excess stays in the Pool
 
@@ -201,7 +203,7 @@ If `sync()` lowers a reserve to 0 while shares exist, deposits and swaps revert 
 
 ### 8.2 Deficit and `sync()`
 
-A deficit in either token blocks add, remove and swap (`ReserveDeficit`, `_checkNoDeficit`); the block lifts only when **both** balances cover their reserves [test] `test_R08_deficitBothBlocksAll`, `test_R24_bothDeficitsOneRefilledStillBlocks`. `sync()` only lowers a reserve to the balance; LPs bear the booked loss pro rata and, as the price jumps, an extra arbitrage loss of about `P·d²/(4x)` (fees ignored) [proof, not tested]. A tiny deficit gives nobody a reason to pay for `sync()`, so integrators should call it.
+A deficit in either token blocks add, remove and swap (`ReserveDeficit`, `_checkNoDeficit`); the block lifts only when **both** balances cover their reserves [test] `test_R08_deficitBothBlocksAll`, `test_R24_bothDeficitsOneRefilledStillBlocks`. `sync()` lowers a deficient reserve to the actual balance. LPs bear the write-down in proportion to their shares. If the write-down changes the reserve ratio, the quoted price changes too, and subsequent arbitrage can impose a further loss on LPs. For a small deficit, the Pool offers no direct reward for calling `sync()`.
 
 ### 8.3 Where tokens sent to the Pool end up
 
@@ -312,7 +314,7 @@ No gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.16 and was not
 | B: one shared Pool implementation, ERC-1167 clones with immutable arguments | Micro-benchmark, not a full Pool [gas]: a clone call costs +2,588 (delegatecall) to +6,072 (reading the three addresses); creating a clone 115,269 vs 2,159,325 for `new AMMPool`. | ≈ 2.04M saved once per pair; at +6,072 per call, offset after about 337 calls [estimate]. Constructor checks move to the Factory. | Not adopted: a busy Pool would pay the per-call overhead on every call. |
 | C: payer-debit check in an optional custodial Router (prototype), not the Pool | Ordinary tokens [gas]: Pool 108,185; direct without the check 104,135 (−4,050); through the Router 230,294 gross (refund counter 45,386 not subtracted). §5.2 taxed token [test]: 1,145 shares through the Router vs 1,272 direct for the same 2,000 token1 paid. | Direct callers lose the debit bound; the custodial Router makes 4 `transferFrom` instead of 2, so a token taxed on every transfer is taxed twice. | Not adopted; Pool retained. |
 
-**Minimal deposits (same experiment).** Two variants keep the caps, step-2 planning, `nonReentrant`, the lock and zero-share rejection, but drop every caller bound. *Four reads*: Pool balances before and after the two transfers, `n_i` = after − before. *Two reads* (V2's rule): balances after payment only, `n_i = balance_i − reserve_i`, so earlier surplus is credited to the depositor and an earlier shortfall is charged to them. Ordinary-token deposit of row C [gas]; outcomes [test]:
+**Minimal deposits (same experiment).** Both variants retain the per-token request caps, the initial plan for matching the pool ratio, the reentrancy guard, the permanent LP lock and the zero-share check. Both omit the payer-debit limits (`maxDebit`), the unmatched-contribution limits (`maxExcess`) and the minimum share count (`minShares`). *Four reads*: Pool balances before and after the two transfers, `n_i` = after − before. *Two reads* (V2's rule): balances after payment only, `n_i = balance_i − reserve_i`, so earlier surplus is credited to the depositor and an earlier shortfall is charged to them. Ordinary-token deposit of row C [gas]; outcomes [test]:
 
 | Design | Pool `balanceOf` | Gas | Most important guarantee given up |
 |---|---:|---:|---|
