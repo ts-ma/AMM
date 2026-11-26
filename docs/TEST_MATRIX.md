@@ -1206,6 +1206,8 @@ The Pool deployment is contained in `createPair`; the three creation rows are se
 
 **Final report export (2026-11-26).** Exported from `docs/REPORT.md` at **`0588c0c`** (§3.2 (c) and §9.2 restate the lock as a book-claim relation that holds without a fixed supply; nothing else changed), same method and stylesheet. Result: **10 pages**, page breaks identical to the `25a415e` export, no table split, SHA-256 `78bb6b9c0668958aa2f29c163b7e65ba0183134511c4c082b54f74055ad25c27`. The reference check above was rerun on this text with the same counts, all present. The export from `25a415e` is superseded.
 
+**Final report export, last wording fix (2026-11-26).** Exported from `docs/REPORT.md` at **`52f95c5`**: §6.3 states the post-withdrawal supply (1,000,050,000,000) and reserve (10,001) from which 99,995,001 follows; the last sentence of §4.2 separates the per-Pool reentrancy guard from the `balanceOf` assumption; §12 item 5 separates the reduced-scale EVM test from the full-scale model; two parentheticals (§10, §11.2 first row) were removed so Table 11.2 stays on one page. Same method and stylesheet. Result: **10 pages**, no table split (Table 11.2 whole on page 8), SHA-256 `e1221c9627e114c96930976defe484dc731ec0ebf18c133214a145d959f4ec15`. The three new passages were checked in the PDF text; the reference check was rerun with the same counts, all present. The export from `0588c0c` is superseded.
+
 ## 15. Mutation-check result classes (from M7, DECISIONS M7-7)
 
 Mutants are applied temporarily by a scratchpad script that always restores `src/`. Each result is reported in one of three classes:
