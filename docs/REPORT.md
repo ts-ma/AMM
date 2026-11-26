@@ -1,6 +1,6 @@
 # A Constant-Product AMM with Measured Token Accounting
 
-Solidity 0.8.38 · Foundry (forge 1.9.0) · OpenZeppelin Contracts v5.7.0 · optimizer 200 runs, `evm_version = osaka`, `via_ir = false`. Source comments point here with `@custom:report docs/REPORT.md §n`; section numbers are stable. Evidence is cited by Foundry test function or file in `test/`; the short IDs inside test names (e.g. W01 in `test_W01_proportionalRedemption`) and the decision IDs of the repository records are listed in §13.4.
+Solidity 0.8.38 · Foundry (forge 1.9.0) · OpenZeppelin Contracts v5.7.0 · optimizer 200 runs, `evm_version = osaka`, `via_ir = false`. Source comments point here with `@custom:report docs/REPORT.md §n`; section numbers are stable. Evidence is cited by Foundry test function or file in `test/`. Short IDs (test prefixes such as W01, decision IDs such as A8 or M8-3) refer to `test/` and to `docs/` (`DECISIONS`, `ARCHITECTURE`, `THREAT_MODEL`, `TEST_MATRIX`).
 
 ## 1. Overview
 
@@ -63,7 +63,7 @@ This equals Uniswap V2's 997/1000 rule [source] (`AMMMath.getAmountOut`; V2 `Rou
 
 [proof] Add and remove round against the actor, so per token `r_i'·S ≥ r_i·S'`; a swap keeps `S` and does not decrease `k` (§2.3). Therefore `k/S²` never decreases through add, remove or swap. Equivalently, `√(r0·r1)/S`, the geometric-mean reserve per share, never decreases [test: invariant I10, §10]. Exceptions: the initial deposit (`S` starts at 0) and `sync()` after a deficit, which lowers `k` (§8.2).
 
-This measure is **not** the market value of a share. A swap lowers the per-share claim on the output token, and when the external price moves an LP can be worth less than simply holding the two tokens (impermanent loss).
+This measure is **not** a share's market value: when the external price moves, an LP can be worth less than holding the two tokens (impermanent loss).
 
 ## 4. Contracts and data structures
 
@@ -236,7 +236,7 @@ Direct donations do not change recorded reserves (§4.4). Deposit excess and swa
 - **Reduced-scale fee channel, local EVM** [test] (`test/AMMPoolF1SwapFeeChannel.t.sol`): with supported tokens, the legitimate way to raise per-share value is trading fees; up to 2,000 round trips were executed, and the attacker as the only LP loses exactly what stays in the Pool.
 - **Full fee path** [model]: an estimated 32,000–58,000 round-trip swaps would be needed to reach the bonus scale; capital, execution and net profitability are **not verified**.
 
-Status: a known economic limitation of this Pool, bounded by each depositor's own `maxExcess`; not a demonstrated exploit with supported tokens. These experiments test this Pool only; no claim is made about other designs. Full figures: THREAT_MODEL T4, TEST_MATRIX §3.4.
+Status: a known economic limitation of this Pool, bounded by each depositor's own `maxExcess`; not a demonstrated exploit with supported tokens. Full figures: THREAT_MODEL T4, TEST_MATRIX §3.4.
 
 ### 9.3 Exit safety
 
@@ -306,7 +306,7 @@ No gas comparison with Uniswap V2 was made (V2 needs Solidity 0.5.16 and was not
 
 ### 11.4 Alternatives evaluated
 
-[gas] Same method as §11.1, on isolated, unmerged branches with the code of `04eb336`: A and B on `a85cd8d` (TEST_MATRIX §14.7); C and the minimal deposits on `da59581` (§14.8).
+[gas] Same method as §11.1, on unmerged branches with the code of `04eb336` (TEST_MATRIX §14.7, §14.8).
 
 | Alternative | Measured effect | Trade-off | Decision |
 |---|---|---|---|
@@ -340,14 +340,13 @@ Most important for users and LPs:
 | No MEV protection, oracle or pause; deadlines use `block.timestamp` | 7 |
 | Small positions may be unredeemable; terminal pools cannot trade again | 6.3, 6.4 |
 | Quotes ignore taxes and deficits; views unsafe mid-transaction | 2.4, 9.1 |
-| Deposit/withdraw fields are positional (token0/token1); swaps use an address | 5.1 |
 | No event for the payer's debit or the unmatched amounts (the latter reconstructable from the pre-mint state) | 5.2 |
 
 ## 13. Traceability
 
 ### 13.1 Development history
 
-Milestones M1–M8 built the Pool, Factory and measured deposit, M10 verification and gas, M11 this report (M9, a protocol fee, out of scope). Records in `docs/`: `MILESTONES`, `DECISIONS`, `TEST_MATRIX`, `THREAT_MODEL`, `REPORT_NOTES`.
+M1–M11 (M9, a protocol fee, out of scope); records in `docs/` (`MILESTONES`, `DECISIONS`, `TEST_MATRIX`, `THREAT_MODEL`, `REPORT_NOTES`).
 
 ### 13.2 Code → report index
 
@@ -364,10 +363,3 @@ Each declaration below carries a NatSpec tag `@custom:report docs/REPORT.md §�
 ### 13.3 References
 
 Uniswap, `v2-core/contracts/UniswapV2Pair.sol` and `v2-periphery/contracts/UniswapV2Router02.sol`, https://github.com/Uniswap/v2-core and https://github.com/Uniswap/v2-periphery (read 2026-11-23). OpenZeppelin Contracts v5.7.0.
-
-### 13.4 Test and decision IDs (lookup only; the main text cites test functions and files)
-
-| ID | Meaning | Where |
-|---|---|---|
-| L W S Q R B P X Z F; F1-T; I1–I10 | tests: deposit, withdrawal, swap, quote, reserves/`sync`/`skim`, in-call balance (B09 tests BI-2′), LP rules, ABI/reentrancy, ranges, Factory; L46 = §5.2; F1-T = §9.2; invariants (§10) | `test/` |
-| D, U, A, MIN-NET, M*n*-*k*; BI; T; G, V, H1 | decisions (e.g. A8, M8-3); balance invariants; threats; gas variants | `DECISIONS` §1, §4, §5, §15; `ARCHITECTURE` §5.5; `THREAT_MODEL` §4; `TEST_MATRIX` §14 |
